@@ -1,0 +1,6 @@
+{
+  "name": "code2video-graphics-bridge",
+  "private": true,
+  "type": "module",
+  "dependencies": {"graphics-api-remotion": "1.0.9"}
+}

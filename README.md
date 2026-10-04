@@ -1,6 +1,8 @@
 
 # Code2Video: Video Generation via Code
 
+> **Windows deployment:** use the [2026 Windows workflow](#2026-windows-workflow) below. The original research/demo instructions are retained for reference and do not describe the current CLI.
+
 <p align="right">
   <b>English</b> | <a href="./README.zh-CN.md">简体中文</a>
 </p>
@@ -358,3 +360,31 @@ If you find our work useful, please cite:
 
 If you like our project, please give us a star ⭐ on [GitHub](https://github.com/showlab/Code2Video) for the latest update!
 [![Star History Chart](https://api.star-history.com/svg?repos=showlab/Code2Video&type=Date)](https://star-history.com/#showlab/Code2Video&Date)
+
+## 2026 Windows workflow
+
+Use the native Windows workflow with an isolated `.venv`, the Tsinghua PyPI mirror, local Manim + FFmpeg rendering, and the local Web panel.
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\setup_windows.ps1
+.\scripts\start_web.ps1
+```
+
+Open `http://127.0.0.1:8787`. Configure the text model, optional independent vision auditor, TTS, and icon sources, then upload Markdown/PDF teaching material and create a lesson. CLI example:
+
+```powershell
+.\.venv\Scripts\python.exe src\agent.py --config config.local.json `
+  --topic "公务员资料分析：增长率" --material examples\增长率.md `
+  --allow-generated-code --feedback
+```
+
+The text model is configurable: replace `YOUR_MODEL_ID` in the example configuration with the provider's actual model ID. The local setup uses the third-party provider's `gpt-6.1-sol` ID; this does not establish that the same ID is available from OpenAI directly. The gateway supports OpenAI Responses and OpenAI-compatible Chat Completions. Set `base_url` to the provider's protocol root (usually ending in `/v1`), not to `/chat/completions`.
+
+With `vision.inherit_text: true`, visual review uses the same API, key, model and protocol as the text model. Changing only the vision configuration allows `--resume` to reuse planning, audio and rendering while rerunning review and composition. Changes to the topic, material or other configuration still require a new output directory.
+
+Text/lesson planning, vision audit, TTS, and icons are independently configurable. Edge TTS needs no API key but does need network access. Manim and FFmpeg run locally. Text PDFs are supported; scanned/OCR PDFs are not built in. Generated Python is not sandboxed: execute only with `--allow-generated-code` in a suitable local account.
+
+The Web panel supports resume, rerun, and versioned editing of the outline, storyboard, and generated code. The pipeline is: outline → storyboard → TTS → assets → Manim code → render → vision audit → compose.
+
+`src/run_agent.sh` and `src/run_agent_single.sh` are legacy compatibility wrappers. On Windows use `scripts\run_windows.ps1` or the Web panel.

@@ -1,5 +1,7 @@
 # Code2Video: 通过代码生成视频
 
+> **Windows 部署请使用文末的「Code2Video 2026 Windows 流程」**。原研究项目的部署说明仅作历史参考，不适用于当前命令行入口。
+
 <p align="right">
   <a href="./README.md">English</a> | <b>简体中文</b>
 </p>
@@ -212,3 +214,43 @@ src/
 
 如果您喜欢我们的项目，欢迎在 GitHub 上给我们一个 Star ⭐ 以获取最新动态！
 [![Star History Chart](https://api.star-history.com/svg?repos=showlab/Code2Video&type=Date)](https://star-history.com/#showlab/Code2Video&Date)
+
+## Code2Video 2026 Windows 流程
+
+本仓库当前推荐使用 Windows 原生流程：独立 `.venv`、清华 PyPI 镜像、Manim + FFmpeg 本地渲染，以及本地 Web 面板管理课程。
+
+### 快速开始
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\setup_windows.ps1
+.\scripts\start_web.ps1
+```
+
+浏览器打开 `http://127.0.0.1:8787`，在面板中配置文本模型、独立视觉审计模型、TTS、图标源，上传 Markdown/PDF 教材后创建课程。命令行方式：
+
+```powershell
+.\.venv\Scripts\python.exe src\agent.py --config config.local.json `
+  --topic "资料分析：增长率" --material examples\增长率.md `
+  --allow-generated-code --feedback
+```
+
+模型名完全可配置：将示例配置中的 `YOUR_MODEL_ID` 改为服务商实际支持的 ID，不使用旧版硬编码列表。本机接入的是第三方服务提供的 `gpt-6.1-sol`，不代表 OpenAI 官方接口提供同名模型。模型网关支持 OpenAI Responses 与 OpenAI-compatible Chat Completions，`base_url` 填协议根地址（通常到 `/v1`）。
+
+设置 `vision.inherit_text: true` 时，视觉评审使用与文本模型相同的地址、密钥、模型和协议。仅更改视觉配置后可用 `--resume` 保留大纲、分镜、配音和渲染，只重新评审和合成；知识点、教材及其他配置变化仍需新输出目录。
+
+### 外部服务
+
+- 文本/规划/分镜/Manim/调试：一个可用的 OpenAI 或兼容 API。
+- 视觉审计：可单独配置一个多模态 OpenAI/兼容 API；不启用也能生成画面。
+- TTS：Edge TTS 无 API Key 但需要联网；也支持 OpenAI 兼容语音和自定义 HTTP TTS。
+- 图标：IconVaultKit、Infyicon、`graphics-api-remotion` 可在 `config.local.json` 中分别启用；每个源风格不同，素材记录会保存来源和许可提示。
+- Manim 和 FFmpeg 在本机运行，不需要视频生成 API。
+
+### 安全与限制
+
+不要把 API Key 写入仓库或命令历史；使用 `.env` 环境变量引用。模型生成的 Python 代码必须在隔离账户或明确允许后执行，`--allow-generated-code` 不是沙箱。PDF 支持文本型 PDF，扫描件/OCR 暂未内置。教材文本、视觉审计帧和 TTS 文本会发送到你配置的外部服务。
+
+同一课程可以从 Web 面板继续、重跑或编辑大纲/分镜/代码生成新版本；流水线阶段为：大纲 → 分镜 → TTS → 素材 → Manim 代码 → 渲染 → 视觉审计 → 合成。
+
+`src/run_agent.sh` 与 `src/run_agent_single.sh` 仅保留为旧环境兼容包装器；Windows 请使用 `scripts\run_windows.ps1` 或 Web 面板。

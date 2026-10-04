@@ -24,6 +24,7 @@ share/python-wheels/
 MANIFEST
 
 # Virtual environments
+.venv/
 venv/
 env/
 ENV/
@@ -40,6 +41,9 @@ test_env/
 .DS_Store
 
 # Manim output
+outputs/
+workspace/
+node_modules/
 media/
 CASES/
 *.mp4
@@ -49,6 +53,7 @@ CASES/
 .env
 *.key
 api_config.json
+config.local.json
 
 # Test outputs
 *.log

@@ -1,0 +1,52 @@
+{
+  "text": {
+    "protocol": "responses",
+    "base_url": "https://api.openai.com/v1",
+    "api_key": "${OPENAI_API_KEY}",
+    "model": "YOUR_MODEL_ID",
+    "max_tokens": 12000,
+    "timeout": 180,
+    "max_retries": 2,
+    "token_parameter": "max_completion_tokens",
+    "extra_body": {}
+  },
+  "vision": {
+    "enabled": true,
+    "inherit_text": true,
+    "frames": 3,
+    "rounds": 1,
+    "max_tokens": 2048,
+    "timeout": 90,
+    "max_retries": 0
+  },
+  "tts": {
+    "provider": "edge",
+    "voice": "zh-CN-XiaoxiaoNeural",
+    "rate": "+0%",
+    "timeout": 120,
+    "max_retries": 2
+  },
+  "video": {
+    "quality": "medium",
+    "font": "Microsoft YaHei",
+    "fps": 30,
+    "max_sections": 4,
+    "max_beats": 5,
+    "fix_attempts": 3,
+    "render_timeout": 300,
+    "pause_seconds": 0.3
+  },
+  "materials": {"max_chars": 24000, "max_file_mb": 50},
+  "assets": {
+    "enabled": false,
+    "strategy": "first_success",
+    "strict": false,
+    "color": "#58C4DD",
+    "max_per_section": 2,
+    "sources": {
+      "iconvaultkit": {"enabled": true, "url": "https://iconvaultkit.com/api/mcp", "collection": "lucide"},
+      "infyicon": {"enabled": false, "url": "https://infyicon.com/mcp", "style": "outline"},
+      "graphics_api_remotion": {"enabled": false, "providers": ["lucide", "phosphor"], "style": "regular"}
+    }
+  }
+}
