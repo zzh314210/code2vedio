@@ -374,3 +374,4 @@ def takeaway(scene, portrait):
 
 
 SCENES = [opening, units, net_rate, principle, example, same_start, differences, recover, equivalent, answer, verification, takeaway]
+

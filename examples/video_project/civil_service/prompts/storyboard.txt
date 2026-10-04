@@ -1,0 +1,12 @@
+{{policy}}
+阶段: STORYBOARD
+大纲: {{outline_json}}
+每章 1 至 {{max_beats}} 个 beat；每个 beat 一句项目指定语言的自然旁白，一段匹配的动画说明。
+每句讲一个可视化步骤，如拆分概念、比较数量、展示因果、移动分组或变换集合。
+可选 icon_keywords 字段为 0-2 个简单英文实体图标名，如 book、calculator；抽象公式不需要图标。
+旁白中的公式改成适合朗读的表达，字幕 caption 保持精炼。字符上限以项目要求为准。保持大纲的章节顺序与 id。
+输出: {"sections":[{"id":"section_1", "title":"章节标题", "beats":[{"narration":"旁白", "caption":"精炼画面字幕", "visual":"图形、布局和逐步动画说明"}]}]}
+<material_data>
+{{material_context}}
+</material_data>
+

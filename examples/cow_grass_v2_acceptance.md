@@ -1,8 +1,10 @@
 # Cow Grass V2 Acceptance Record
 
-Acceptance date: 2026-10-04
+Historical acceptance date: 2026-10-04
 
-## Deliverables
+The local test videos listed below have been deleted during the pipeline cleanup. This record describes their past acceptance results, not currently available deliverables or acceptance of the refactored project pack. Regenerated videos require fresh review.
+
+## Historical Deliverables (Deleted)
 
 - Landscape master: `workspace/9420f0c89126/output/final.mp4`
   - 1920x1080, 30 fps, approximately 120.667 seconds.
@@ -10,7 +12,7 @@ Acceptance date: 2026-10-04
 - Portrait reflow: `workspace/be9bf5b8c87f/output/final.mp4`
   - 1080x1920, 30 fps, approximately 120.667 seconds.
   - Independently laid out for portrait; it is not a crop of the landscape video.
-- V1 preserved: `workspace/1ffb73363c20/output/final.mp4`
+- V1 test video (also deleted): `workspace/1ffb73363c20/output/final.mp4`
 
 ## Content verification
 

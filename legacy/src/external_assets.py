@@ -3,6 +3,9 @@ import requests
 import re
 from pathlib import Path
 from typing import Dict, List, Optional
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from prompts import get_prompt_download_assets, get_prompt_place_assets
 

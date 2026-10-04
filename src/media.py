@@ -17,9 +17,9 @@ def ffmpeg_binary():
     return shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def run_command(arguments, timeout=300, cwd=None):
+def run_command(arguments, timeout=300, cwd=None, env=None):
     try:
-        result = subprocess.run(arguments, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+        result = subprocess.run(arguments, cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired as failure:
         raise RuntimeError(f"子进程超时（{timeout}s）: {arguments[0]}") from failure
     if result.returncode:
@@ -56,11 +56,11 @@ def concat(files, destination, audio=False):
     run_command([ffmpeg_binary(), "-y", "-f", "concat", "-safe", "0", "-i", str(listing), *encoding, str(destination)])
 
 
-def mux(video, audio, subtitles, destination, duration):
+def mux(video, audio, subtitles, destination, duration, subtitle_language="zho"):
     run_command([
         ffmpeg_binary(), "-y", "-i", str(video), "-i", str(audio), "-i", str(subtitles),
         "-map", "0:v:0", "-map", "1:a:0", "-map", "2:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-        "-c:s", "mov_text", "-metadata:s:s:0", "language=zho", "-t", str(duration), "-movflags", "+faststart", str(destination),
+        "-c:s", "mov_text", "-metadata:s:s:0", f"language={subtitle_language}", "-t", str(duration), "-movflags", "+faststart", str(destination),
     ])
 
 

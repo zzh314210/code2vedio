@@ -1,6 +1,10 @@
+import importlib.util
 import textwrap
+from pathlib import Path
 
 from manim import Scene, Text, SVGMobject, VGroup, RoundedRectangle, Rectangle, FadeOut, config
+
+from project_extensions import read_extensions
 
 
 class NarratedScene(Scene):
@@ -20,9 +24,23 @@ class NarratedScene(Scene):
         default = "#203C36" if self.lesson_style.get("theme") == "light" else "#FFFFFF"
         return Text(text, font=self.lesson_font, font_size=font_size, color=color or default)
 
-    def cow_grass(self, index):
-        from cow_grass_visuals import animate
-        animate(self, index)
+    def extension(self, name, *args, **kwargs):
+        runtime = Path(__file__).resolve().parent
+        entries = read_extensions(runtime)
+        if name not in entries:
+            raise ValueError("未注册的项目扩展: " + str(name))
+        if not hasattr(self, "_extension_cache"):
+            self._extension_cache = {}
+        if name not in self._extension_cache:
+            entry = entries[name]
+            spec = importlib.util.spec_from_file_location("project_extension_" + name, runtime / entry["file"])
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            function = getattr(module, entry["entrypoint"], None)
+            if not callable(function):
+                raise ValueError("项目扩展入口不是可调用函数: " + name)
+            self._extension_cache[name] = function
+        return self._extension_cache[name](self, *args, **kwargs)
 
     def begin_beat(self, index):
         self.clear()
@@ -36,7 +54,7 @@ class NarratedScene(Scene):
         top = config.frame_height / 2
         accent = "#287D68" if light else "#58C4DD"
         muted = "#627A73" if light else "#94A3B8"
-        brand = self.scene_text(self.lesson_style.get("brand") or "考公 · 可视化课堂", 16, muted)
+        brand = self.scene_text(self.lesson_style.get("brand", "教学 · 可视化课堂"), 16, muted)
         brand.move_to([0, top - 0.38, 0])
         title = self.scene_text(self.lesson_title, 29 if portrait else 32, accent)
         if title.width > width:

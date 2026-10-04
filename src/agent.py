@@ -11,12 +11,17 @@ from configuration import ROOT, load_config, validate_endpoint
 
 
 def parser():
-    command = argparse.ArgumentParser(description="中文考公教案 → 配音驱动的 Manim 教学视频（Windows）")
+    command = argparse.ArgumentParser(description="中文教材 → 配音驱动的通用 Manim 教学视频（Windows）")
     command.add_argument("--config", help="JSON 配置文件，默认 config.local.json")
     command.add_argument("--topic", "--knowledge_point", dest="topic", help="目标知识点")
     command.add_argument("--material", action="append", default=[], help="Markdown/PDF 教材，可重复")
     command.add_argument("--pdf-pages", help="PDF 页码，如 2-5,8；应用于输入的所有 PDF")
-    command.add_argument("--output", help="输出目录；默认 outputs/知识点-时间")
+    command.add_argument("--output", help="项目目录（兼容旧参数）；新项目产物放在其 output 子目录")
+    command.add_argument("--project", help="本视频独立项目目录；默认 projects/日期-知识点--ID")
+    command.add_argument("--project-pack", help="显式注入可信项目包目录（提示词、course/video、教材、扩展）；只用于新项目")
+    command.add_argument("--course-file", help="本视频要求 JSON；可含 course/video，或直接 instructions/prompts")
+    command.add_argument("--prompts-dir", help="本视频完整提示词模板目录：policy/outline/storyboard/code/review.txt")
+    command.add_argument("--resource", "--example", action="append", default=[], help="本视频 SVG、绘图源码或示例文件；可重复，源码仅归档不自动执行")
     command.add_argument("--resume", action="store_true", help="复用同配置任务的教材/大纲/分镜/配音")
     command.add_argument("--plan-only", action="store_true", help="只生成大纲和分镜，不执行模型生成的代码")
     command.add_argument("--stop-after", choices=["outline", "storyboard", "audio", "assets", "code", "render", "review", "compose"], default="compose")
@@ -34,10 +39,10 @@ def parser():
     command.add_argument("--tts-provider", choices=["edge", "openai", "http", "none"])
     command.add_argument("--tts-voice")
     command.add_argument("--quality", choices=["low", "medium", "high"])
-    command.add_argument("--doctor", action="store_true", help="离线检查依赖、FFmpeg、中文字体")
+    command.add_argument("--doctor", action="store_true", help="离线检查依赖、FFmpeg、配置字体")
     command.add_argument("--list-models", action="store_true", help="查询所配置服务 /models（服务可能不支持）")
     command.add_argument("--check-api", action="store_true", help="实际调用文本/启用的视觉接口（可能收费）")
-    command.add_argument("--check-tts", action="store_true", help="实际合成一句中文测试音频")
+    command.add_argument("--check-tts", action="store_true", help="实际合成一句测试音频")
     command.add_argument("--check-assets", action="store_true", help="查询各启用图标源并缓存示例")
     return command
 
@@ -53,8 +58,8 @@ def doctor(config):
     print("FFmpeg: " + run_command([ffmpeg_binary(), "-version"]).splitlines()[0])
     font = config["video"]["font"]
     if font not in list_fonts():
-        raise ValueError(f"中文字体 {font} 未安装，请设置 video.font 为系统已有字体")
-    print(f"中文字体: {font}\n基础模式使用 Text，无需 LaTeX、GPU 或 WSL。")
+        raise ValueError(f"字体 {font} 未安装，请设置 video.font 为系统已有字体")
+    print(f"字体: {font}\n基础模式使用 Text，无需 LaTeX、GPU 或 WSL。")
 
 
 def validate_runtime(config):
@@ -119,7 +124,7 @@ def main(argv=None):
         if arguments.check_tts:
             from narration import Narrator
             destination = ROOT / "outputs" / "checks" / "tts.wav"
-            info = Narrator(config["tts"]).synthesize("这是一段公务员考试知识点讲解的配音测试。", destination)
+            info = Narrator(config["tts"]).synthesize("这是一段教学视频的配音测试。", destination)
             print(f"TTS 验证成功: {destination}\n{json.dumps(info, ensure_ascii=False)}")
             return 0
         if arguments.check_assets:
@@ -132,10 +137,54 @@ def main(argv=None):
         if not arguments.plan_only and arguments.stop_after in ("render", "review", "compose") and not arguments.allow_generated_code:
             raise ValueError("渲染会执行模型生成的 Python。请先 --plan-only 检查教案，确认后使用 --allow-generated-code；建议无敏感文件的隔离账户运行。")
         from pipeline import VideoPipeline
-        safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", arguments.topic).strip(" .")[:60] or "lesson"
-        output = arguments.output or ROOT / "outputs" / (safe + "-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
+        from configuration import merge, resolve_config
+        from video_project import PROMPT_NAMES, apply_project_pack, archive_resource, initialize_project, new_project_path, project_pack_config, restore_project_config, write_json
+        if arguments.project and arguments.output:
+            raise ValueError("--project 与 --output 不能同时指定")
+        if arguments.resume and not (arguments.project or arguments.output):
+            raise ValueError("续跑请明确指定 --project 或 --output，避免创建新项目")
+        if arguments.resume and any((arguments.project_pack, arguments.course_file, arguments.prompts_dir, arguments.resource)):
+            raise ValueError("续跑不能重新注入项目输入，请创建新项目")
+        base = Path(arguments.project or arguments.output).expanduser().resolve() if arguments.project or arguments.output else new_project_path(arguments.topic)
+        if arguments.resume and (base / "settings.json").is_file():
+            config = resolve_config(merge(restore_project_config(base, config), overrides))
+        elif (base / "project.json").exists():
+            raise ValueError("项目已存在；原配置续跑用 --resume，修改课程请使用新的项目目录")
+        if arguments.project_pack:
+            config = merge(config, project_pack_config(arguments.project_pack))
+        if arguments.course_file:
+            course = json.loads(Path(arguments.course_file).read_text(encoding="utf-8-sig"))
+            if not isinstance(course, dict):
+                raise ValueError("课程要求必须是 JSON 对象")
+            config = merge(config, course if "course" in course or "video" in course else {"course": course})
+        config = resolve_config(merge(config, overrides))
+        if arguments.pdf_pages is not None:
+            config.setdefault("course", {})["pdf_pages"] = arguments.pdf_pages
+        validate_runtime(config)
+        initialize_project(base, arguments.topic, config)
+        if arguments.project_pack:
+            apply_project_pack(arguments.project_pack, base)
+        if not arguments.resume:
+            write_json(base / "prompts/requirements.json", config.get("course", {}))
+        if arguments.prompts_dir:
+            for name in PROMPT_NAMES:
+                source = Path(arguments.prompts_dir).expanduser().resolve() / (name + ".txt")
+                (base / "prompts" / (name + ".txt")).write_text(source.read_text(encoding="utf-8-sig"), encoding="utf-8")
+        for filename in arguments.resource:
+            source = Path(filename).expanduser().resolve()
+            archive_resource(base, source.name, source.read_bytes(), config["assets"].get("color", "#287D68"))
+        output = base if arguments.resume and (base / "manifest.json").is_file() else base / "output"
+        print("视频项目目录: " + str(base))
         print("注意：教材选段会发送给文本服务；启用评审会上传视频帧，旁白会发送给 TTS 服务。")
-        result = VideoPipeline(arguments.topic, config, output, arguments.material, arguments.pdf_pages, arguments.resume, on_event=lambda event: print(f"[{event['stage']}] {event['status']} {event['message']}")).run(arguments.plan_only, arguments.stop_after)
+        pages = arguments.pdf_pages or config.get("course", {}).get("pdf_pages")
+        materials = list(arguments.material)
+        if not arguments.resume:
+            supplied_names = {Path(filename).name.casefold() for filename in materials}
+            bundled = [str(file) for file in sorted((base / "materials").iterdir()) if file.is_file() and file.suffix.lower() in (".md", ".markdown", ".pdf")]
+            if any(Path(filename).name.casefold() in supplied_names for filename in bundled):
+                raise ValueError("输入教材与项目包教材同名，请重命名后重试")
+            materials = bundled + materials
+        result = VideoPipeline(arguments.topic, config, output, materials, pages, arguments.resume, on_event=lambda event: print(f"[{event['stage']}] {event['status']} {event['message']}"), project=base).run(arguments.plan_only, arguments.stop_after)
         print(f"完成: {result}")
         return 0
     except Exception as failure:

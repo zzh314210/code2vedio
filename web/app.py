@@ -2,6 +2,7 @@ import json
 import os
 import secrets
 import re
+import shutil
 import sys
 import threading
 import traceback
@@ -20,11 +21,15 @@ if str(SRC) not in sys.path:
 
 from configuration import load_config, merge, public_config, resolve_config, sanitize_error
 from pipeline import VideoPipeline
+from video_project import PROJECTS as DEFAULT_PROJECTS, PROMPT_NAMES, RESOURCE_SUFFIXES, apply_project_pack, archive_resource, contained, copy_project_inputs, initialize_project, new_project_path, project_pack_config, restore_project_config, safe_name, write_json
 
 app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024
 WORKSPACE = ROOT / "workspace"
 WORKSPACE.mkdir(parents=True, exist_ok=True)
+PROJECTS = DEFAULT_PROJECTS
+PROJECTS.mkdir(parents=True, exist_ok=True)
+PROJECT_PACKS = ROOT / "examples/video_project"
 JOBS = {}
 LOCK = threading.RLock()
 EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="code2video")
@@ -88,15 +93,12 @@ def needs_credentials(value):
 
 
 def saved_job_config(base):
-    snapshot = json.loads((base / "settings.json").read_text(encoding="utf-8"))
-    current = current_config()
-    previous_effective = resolve_config(snapshot)
-    current_effective = resolve_config(current)
-    for role in ("text", "vision", "tts"):
-        settings = previous_effective.get(role, {})
-        if needs_credentials(settings) and any(settings.get(key) != current_effective.get(role, {}).get(key) for key in ("base_url", "url")):
-            raise ValueError("任务服务地址与当前凭证配置不一致；请恢复原服务地址或创建新版本")
-    return restore_credentials(snapshot, current)
+    return restore_project_config(base, current_config())
+
+
+def save_defaults(updates):
+    common = {key: value for key, value in updates.items() if key != "course"}
+    return save_config(common)
 
 
 def save_config(updates):
@@ -125,17 +127,22 @@ def persist(job_id):
 
 
 def job_root(job_id):
-    base = (WORKSPACE / job_id).resolve()
-    if base.parent != WORKSPACE.resolve():
+    if not re.fullmatch(r"[a-f0-9]{12}", job_id):
         raise ValueError("非法任务 ID")
+    matches = list(PROJECTS.glob("*--" + job_id))
+    if len(matches) > 1:
+        raise ValueError("存在重复项目 ID")
+    base = (matches[0] if matches else WORKSPACE / job_id).resolve()
+    if base.parent not in (WORKSPACE.resolve(), PROJECTS.resolve()):
+        raise ValueError("非法项目目录")
     return base
 
 
 def safe_file(job_id, relative):
     base = job_root(job_id)
     target = (base / relative).resolve()
-    allowed = [base / "output", base / "materials"]
-    if not any(root in target.parents for root in allowed):
+    allowed = [base / name for name in ("output", "materials", "prompts", "examples", "code")]
+    if base not in target.parents or not any(root in target.parents for root in allowed):
         raise ValueError("该路径不是公开产物")
     return base, target
 
@@ -163,9 +170,13 @@ def run_job(job_id, topic, uploads, config, stop_after, allow_generated_code, re
         for upload in uploads:
             target = material_dir / upload["name"]
             target.write_bytes(upload["data"])
-            material_paths.append(str(target))
+        if not resume:
+            material_paths = [
+                str(file) for file in sorted(material_dir.iterdir())
+                if file.is_file() and file.suffix.lower() in (".md", ".markdown", ".pdf")
+            ]
         if resume:
-            material_paths = [str(file) for file in material_dir.iterdir() if file.suffix.lower() in (".pdf", ".md", ".markdown")]
+            material_paths = []
         output = base / "output"
         output.mkdir(parents=True, exist_ok=True)
         for name, data in (seeds or {}).items():
@@ -175,7 +186,7 @@ def run_job(job_id, topic, uploads, config, stop_after, allow_generated_code, re
         from agent import validate_runtime
         effective = resolve_config(config)
         validate_runtime(effective)
-        pipeline = VideoPipeline(topic, effective, output, material_paths, config.get("course", {}).get("pdf_pages"), resume=resume, on_event=lambda event: emit(job_id, {**event, "message": sanitized(event.get("message", ""), config)}))
+        pipeline = VideoPipeline(topic, effective, output, material_paths, config.get("course", {}).get("pdf_pages"), resume=resume, on_event=lambda event: emit(job_id, {**event, "message": sanitized(event.get("message", ""), config)}), project=base)
         result = pipeline.run(stop_after=stop_after)
         with LOCK:
             JOBS[job_id].update({"status": "complete", "result": str(result), "finished_at": datetime.now().isoformat(timespec="seconds")})
@@ -187,19 +198,17 @@ def run_job(job_id, topic, uploads, config, stop_after, allow_generated_code, re
         emit(job_id, {"stage": JOBS.get(job_id, {}).get("stage", "unknown"), "status": "failed", "message": sanitized(error, config)[:1000]})
 
 
-def make_job(topic, files, config, stop_after, allow_generated_code, parent=None, seeds=None):
+def make_job(topic, files, config, stop_after, allow_generated_code, parent=None, seeds=None, resources=None, prompt_files=None, input_edits=None, project_pack=None):
     if stop_after not in ("outline", "storyboard", "audio", "assets", "code", "render", "review", "compose"):
         raise ValueError("无效阶段")
+    if parent and project_pack:
+        raise ValueError("已有项目的新版本不能重新注入项目包")
     job_id = uuid.uuid4().hex[:12]
-    base = job_root(job_id)
-    base.mkdir(parents=True, exist_ok=False)
+    base = new_project_path(topic, PROJECTS, job_id)
     uploads = []
     for file in files:
-        name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", Path(file.filename or "material").name)
-        name = name.strip(" .")
-        if name.split(".")[0].upper() in {"CON", "PRN", "AUX", "NUL", "COM1", "LPT1"}:
-            name = "material_" + name
-        if any(upload["name"] == name for upload in uploads):
+        name = safe_name(Path(file.filename or "material").name)
+        if any(upload["name"].casefold() == name.casefold() for upload in uploads):
             raise ValueError("上传教材存在重复文件名，请重命名")
         if Path(name).suffix.lower() not in (".md", ".markdown", ".pdf"):
             raise ValueError("教材仅支持 Markdown/PDF")
@@ -207,16 +216,65 @@ def make_job(topic, files, config, stop_after, allow_generated_code, parent=None
         if not data or len(data) > 50 * 1024 * 1024:
             raise ValueError(f"教材为空或超过 50MB: {name}")
         uploads.append({"name": name, "data": data})
-    with LOCK:
-        JOBS[job_id] = {
-            "id": job_id, "topic": topic, "status": "queued", "stage": "queued", "stage_status": "waiting",
-            "message": "等待运行", "events": [], "result": None, "parent": parent,
-            "created_at": datetime.now().isoformat(timespec="seconds"),
-        }
-        persist(job_id)
-    (base / "settings.json").write_text(json.dumps(public_config(config), ensure_ascii=False), encoding="utf-8")
-    EXECUTOR.submit(run_job, job_id, topic, uploads, config, stop_after, allow_generated_code, seeds=seeds)
-    return job_id
+    resource_uploads = []
+    for file in resources or []:
+        name = safe_name(Path(file.filename or "resource").name)
+        data = file.read()
+        if Path(name).suffix.lower() not in RESOURCE_SUFFIXES or not data or len(data) > 50 * 1024 * 1024:
+            raise ValueError("资源格式不支持、为空或超过 50MB: " + name)
+        if any(item["name"].casefold() == name.casefold() for item in resource_uploads):
+            raise ValueError("资源文件名重复")
+        resource_uploads.append({"name": name, "data": data})
+    supplied_templates = {}
+    for file in prompt_files or []:
+        name = Path(file.filename or "").name
+        if name not in [stage + ".txt" for stage in PROMPT_NAMES] or name in supplied_templates:
+            raise ValueError("模板名称必须是唯一的 policy/outline/storyboard/code/review.txt")
+        text = file.read().decode("utf-8-sig")
+        if not text.strip() or len(text) > 200000:
+            raise ValueError("模板为空或过大")
+        supplied_templates[name] = text
+    if project_pack:
+        bundled_names = {file.name.casefold() for file in (Path(project_pack) / "materials").glob("*") if file.is_file() and file.suffix.lower() in (".md", ".markdown", ".pdf")}
+        if any(upload["name"].casefold() in bundled_names for upload in uploads):
+            raise ValueError("上传教材与项目包教材同名，请重命名")
+    base.mkdir(parents=True, exist_ok=False)
+    registered = False
+    try:
+        if parent:
+            copy_project_inputs(job_root(parent), base)
+        initialize_project(base, topic, config, job_id, parent)
+        if project_pack:
+            apply_project_pack(project_pack, base)
+        write_json(base / "prompts/requirements.json", config.get("course", {}))
+        for name, text in supplied_templates.items():
+            (base / "prompts" / name).write_text(text, encoding="utf-8")
+        for relative, data in (input_edits or {}).items():
+            target = base / relative
+            if relative == "prompts/requirements.json":
+                write_json(target, data)
+            else:
+                target.write_text(data, encoding="utf-8")
+        for upload in uploads:
+            (base / "materials" / upload["name"]).write_bytes(upload["data"])
+        for upload in resource_uploads:
+            archive_resource(base, upload["name"], upload["data"], config["assets"].get("color", "#287D68"))
+        (base / "settings.json").write_text(json.dumps(public_config(config), ensure_ascii=False), encoding="utf-8")
+        with LOCK:
+            JOBS[job_id] = {
+                "id": job_id, "topic": topic, "status": "queued", "stage": "queued", "stage_status": "waiting",
+                "message": "等待运行", "events": [], "result": None, "parent": parent,
+                "project_directory": str(base), "layout_version": 1,
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+            }
+            persist(job_id)
+            registered = True
+        EXECUTOR.submit(run_job, job_id, topic, uploads, config, stop_after, allow_generated_code, seeds=seeds)
+        return job_id
+    except Exception:
+        if not registered:
+            shutil.rmtree(base, ignore_errors=True)
+        raise
 
 
 @app.get("/")
@@ -247,7 +305,7 @@ def tts_test():
         from narration import Narrator
         config = resolve_config(merge(current_config(), request.get_json(force=True) or {}))
         destination = WORKSPACE / "tts-check.wav"
-        result = Narrator(config["tts"]).synthesize("增长率的分母是基期量，不是现期量。", destination)
+        result = Narrator(config["tts"]).synthesize("这是一段教学视频的配音测试。", destination)
         return jsonify({"ok": True, "audio_url": "/api/tts/audio", "result": result})
     except Exception as error:
         return jsonify({"error": sanitized(error)}), 400
@@ -280,9 +338,12 @@ def continue_job(job_id):
 
 
 def restore_jobs():
-    for target in WORKSPACE.glob("*/job.json"):
+    for target in [*WORKSPACE.glob("*/job.json"), *PROJECTS.glob("*/job.json")]:
         try:
             job = json.loads(target.read_text(encoding="utf-8"))
+            if job_root(job["id"]) != target.parent.resolve():
+                continue
+            job["project_directory"] = str(target.parent.resolve())
             if job["status"] in ("running", "queued"):
                 job.update({"status": "interrupted", "message": "服务已重启，可继续运行"})
             JOBS[job["id"]] = job
@@ -342,6 +403,28 @@ def get_job(job_id):
         return jsonify(value)
 
 
+def project_pack_path(name):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name):
+        raise ValueError("非法项目包名称")
+    target = contained(PROJECT_PACKS, PROJECT_PACKS / name)
+    if not target.is_dir():
+        raise ValueError("项目包不存在")
+    return target
+
+
+@app.get("/api/project-packs")
+def project_packs():
+    return jsonify([{"id": directory.name} for directory in sorted(PROJECT_PACKS.iterdir()) if directory.is_dir() and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", directory.name)])
+
+
+@app.get("/api/project-packs/<name>")
+def project_pack_details(name):
+    try:
+        return jsonify({"id": name, "config": project_pack_config(project_pack_path(name))})
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+
 @app.post("/api/jobs")
 def start_job():
     try:
@@ -349,12 +432,18 @@ def start_job():
         if not topic or len(topic) > 200:
             raise ValueError("请输入 1-200 字的知识点")
         config_payload = json.loads(request.form.get("config") or "{}")
-        config = save_config(config_payload) if request.form.get("save_config") == "true" else merge(current_config(), config_payload)
+        pack_name = request.form.get("project_pack", "")
+        pack = project_pack_path(pack_name) if pack_name else None
+        defaults = {key: value for key, value in config_payload.items() if key != "video"} if pack else config_payload
+        common = current_config()
+        config = merge(merge(common, project_pack_config(pack) if pack else {}), config_payload)
         config.setdefault("course", {})["pdf_pages"] = request.form.get("pdf_pages") or None
         stop_after = request.form.get("stop_after", "compose")
         if stop_after not in ("outline", "storyboard", "audio", "assets", "code", "render", "review", "compose"):
             raise ValueError("无效流水线阶段")
-        job_id = make_job(topic, request.files.getlist("materials"), config, stop_after, request.form.get("allow_generated_code") == "true")
+        job_id = make_job(topic, request.files.getlist("materials"), config, stop_after, request.form.get("allow_generated_code") == "true", resources=request.files.getlist("resources"), prompt_files=request.files.getlist("prompt_templates"), project_pack=pack)
+        if request.form.get("save_config") == "true":
+            save_defaults(defaults)
         return jsonify({"ok": True, "job_id": job_id})
     except Exception as error:
         return jsonify({"error": str(error)}), 400
@@ -372,23 +461,45 @@ def rerun_job(job_id):
         if not previous:
             raise ValueError("任务仅存在于磁盘，无法从 Web 读取主题；请重新创建任务")
         payload = request.get_json(force=True) or {}
-        config = save_config(payload.get("config", {})) if payload.get("save_config") else merge(current_config(), payload.get("config", {}))
+        updates = payload.get("config", {})
+        config = restore_project_config(base, current_config(), updates)
         files = []
         for item in material_dir.iterdir():
             if item.suffix.lower() in (".md", ".markdown", ".pdf"):
                 files.append(type("Upload", (), {"filename": item.name, "read": lambda self, path=item: path.read_bytes()})())
         seeds = {}
+        input_edits = {}
         edit_name = payload.get("edit_name")
         if edit_name:
-            if edit_name not in ("outline.json", "storyboard.json") and not re.fullmatch(r"section_\d+_code\.json", edit_name):
-                raise ValueError("只能编辑大纲、分镜和 Manim 代码工件")
+            if edit_name.startswith("output/"):
+                edit_name = edit_name[len("output/"):]
+            prompt_names = ["prompts/" + stage + ".txt" for stage in PROMPT_NAMES]
+            if edit_name in prompt_names or edit_name == "prompts/requirements.json":
+                edited = payload["edit_data"]
+                if edit_name == "prompts/requirements.json":
+                    if not isinstance(edited, dict):
+                        raise ValueError("课程要求必须为 JSON 对象")
+                    config["course"] = edited
+                elif not isinstance(edited, str) or not edited.strip() or len(edited) > 200000:
+                    raise ValueError("提示词模板为空或过大")
+                input_edits[edit_name] = edited
+            elif edit_name not in ("outline.json", "storyboard.json") and not re.fullmatch(r"section_\d+_code\.json", edit_name):
+                raise ValueError("只能编辑本项目提示词、课程要求、大纲、分镜和 Manim 代码工件")
             edited = payload["edit_data"]
-            if edit_name != "outline.json":
+            if not input_edits and edit_name != "outline.json":
                 seeds["outline.json"] = json.loads((base / "output/outline.json").read_text(encoding="utf-8"))
-            if edit_name not in ("outline.json", "storyboard.json"):
+            if not input_edits and edit_name not in ("outline.json", "storyboard.json"):
                 seeds["storyboard.json"] = json.loads((base / "output/storyboard.json").read_text(encoding="utf-8"))
-            seeds[edit_name] = edited
-        new_id = make_job(payload.get("topic", previous["topic"]), files, config, payload.get("stop_after", "compose"), bool(payload.get("allow_generated_code")), parent=job_id, seeds=seeds)
+            if not input_edits:
+                seeds[edit_name] = edited
+        resources = []
+        for entry in payload.get("resources", []):
+            if not isinstance(entry, dict) or not isinstance(entry.get("filename"), str) or not isinstance(entry.get("text"), str):
+                raise ValueError("版本资源必须含 filename 和 text")
+            resources.append(type("Upload", (), {"filename": entry["filename"], "read": lambda self, data=entry["text"].encode("utf-8"): data})())
+        new_id = make_job(payload.get("topic", previous["topic"]), files, config, payload.get("stop_after", "compose"), bool(payload.get("allow_generated_code")), parent=job_id, seeds=seeds, input_edits=input_edits, resources=resources)
+        if payload.get("save_config"):
+            save_defaults(updates)
         return jsonify({"ok": True, "job_id": new_id})
     except Exception as error:
         return jsonify({"error": str(error)}), 400
@@ -397,14 +508,39 @@ def rerun_job(job_id):
 @app.get("/api/jobs/<job_id>/file/<path:relative>")
 def artifact(job_id, relative):
     try:
-        if not relative.startswith(("output/", "materials/")) or Path(relative).suffix.lower() not in (".json", ".md", ".pdf", ".srt", ".py", ".txt", ".log", ".jpg", ".png", ".svg", ".mp4", ".wav"):
+        if not relative.startswith(("output/", "materials/", "prompts/", "examples/", "code/")) or Path(relative).suffix.lower() not in (".json", ".jsonl", ".md", ".markdown", ".pdf", ".srt", ".py", ".txt", ".log", ".jpg", ".png", ".svg", ".mp4", ".wav"):
             raise ValueError("该文件不是公开产物")
         base, target = safe_file(job_id, relative)
         if not target.is_file():
             return jsonify({"error": "文件不存在"}), 404
-        return send_file(target)
+        return send_file(target, as_attachment=target.suffix.lower() in (".svg", ".py"))
     except Exception as error:
         return jsonify({"error": str(error)}), 400
+
+
+@app.get("/api/jobs/<job_id>/config")
+def project_config(job_id):
+    try:
+        config = json.loads((job_root(job_id) / "settings.json").read_text(encoding="utf-8"))
+        return jsonify(redact(config))
+    except Exception as error:
+        return jsonify({"error": sanitized(error)}), 400
+
+
+@app.get("/api/jobs/<job_id>/files")
+def project_files(job_id):
+    try:
+        base = job_root(job_id)
+        files = []
+        for directory in ("prompts", "materials", "examples", "code", "output"):
+            for file in sorted((base / directory).rglob("*")):
+                if file.is_file() and "__pycache__" not in file.parts and file.suffix.lower() not in (".pyc", ".tmp"):
+                    relative = file.relative_to(base).as_posix()
+                    safe_file(job_id, relative)
+                    files.append({"path": relative, "size": file.stat().st_size})
+        return jsonify({"project_directory": str(base), "files": files})
+    except Exception as error:
+        return jsonify({"error": sanitized(error)}), 400
 
 
 @app.post("/api/asset-check")

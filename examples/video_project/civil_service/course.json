@@ -1,0 +1,20 @@
+{
+  "course": {
+    "instructions": "面向行测初学者，约2分钟，只讲一个知识点和一道例题。先直觉后公式，中文口语旁白，浅色精美画面，数字与答案以教材为准，不冒充历年真题。",
+    "prompts": {
+      "outline": "按问题引入、原理、例题、易错点组织，最多3章。",
+      "storyboard": "每句旁白对应一个动画步骤。公式改成适合朗读的中文。用英文 icon_keywords 指定有意义的图标，不堆砌装饰。",
+      "code": "以浅色主题为准，用深色文字、青绿色与柔和橙色区分变量，保持标题和字幕安全区；授权素材可用时通过 self.asset 使用。",
+      "review": "检查公式、数字和教材一致，中文清晰、浅色对比度足够、不重叠，图形确实解释推理。"
+    }
+  },
+  "video": {
+    "theme": "light",
+    "orientation": "landscape",
+    "brand": "行测可视化 · 数量关系",
+    "quality": "high",
+    "max_sections": 3,
+    "max_beats": 4,
+    "render_timeout": 900
+  }
+}

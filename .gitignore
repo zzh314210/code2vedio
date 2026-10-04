@@ -43,6 +43,7 @@ test_env/
 # Manim output
 outputs/
 workspace/
+projects/
 node_modules/
 media/
 CASES/

@@ -24,9 +24,11 @@ def image_url(filename):
 
 
 class ModelGateway:
-    def __init__(self, settings, role="text"):
+    def __init__(self, settings, role="text", on_request=None):
         validate_model(settings, role)
         self.settings = settings
+        self.role = role
+        self.on_request = on_request
         self.client = OpenAI(
             api_key=settings["api_key"], base_url=settings["base_url"].rstrip("/"),
             timeout=float(settings.get("timeout", 180)), max_retries=int(settings.get("max_retries", 2)),
@@ -34,6 +36,8 @@ class ModelGateway:
         self.usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     def request(self, prompt, images=None, max_tokens=None):
+        if self.on_request:
+            self.on_request(self.role, prompt, images or [])
         limit = int(max_tokens or self.settings.get("max_tokens", 12000))
         extra = self.settings.get("extra_body", {})
         if self.settings["protocol"] == "responses":

@@ -10,6 +10,9 @@ from scipy import stats
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import functools
 import random
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils import extract_answer_from_response, eva_video_list
 from gpt_request import request_gemini_with_video, request_gemini

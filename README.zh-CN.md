@@ -169,12 +169,12 @@ src/
 
 1. **知识传递 (TeachQuiz)**
    ```bash
-   python3 eval_TQ.py
+   python3 legacy/src/eval_TQ.py
    ```
 
 2. **美学质量 (AES)**
    ```bash
-   python3 eval_AES.py
+   python3 legacy/src/eval_AES.py
    ```
 
 3. **效率指标 (EFF)**
@@ -217,6 +217,10 @@ src/
 
 ## Code2Video 2026 Windows 流程
 
+空白项目的提示词与品牌保持中立，不携带专题扩展。`--project-pack examples\video_project\civil_service` 注入考公要求；牛吃草包位于 `examples/video_project/cow_grass`。可信扩展在项目 `code/runtime/extensions.json` 显式注册，以 `self.extension("名称", ...)` 调用；渲染不导入仓库 `src/`，上传 Python 只归档、不自动执行。
+
+历史研究代码与提示词已隔离到 `legacy/`，前文旧安装与基准命令仅作历史资料；当前操作以本节、`SOP.md` 和 `examples/video_project/README.md` 为准。
+
 本仓库当前推荐使用 Windows 原生流程：独立 `.venv`、清华 PyPI 镜像、Manim + FFmpeg 本地渲染，以及本地 Web 面板管理课程。
 
 ### 快速开始
@@ -231,7 +235,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ```powershell
 .\.venv\Scripts\python.exe src\agent.py --config config.local.json `
-  --topic "资料分析：增长率" --material examples\增长率.md `
+  --project "projects\lesson-001" --topic "资料分析：增长率" `
+  --project-pack "examples\video_project\civil_service" --material examples\增长率.md `
   --allow-generated-code --feedback
 ```
 
@@ -254,3 +259,14 @@ Set-ExecutionPolicy -Scope Process Bypass
 同一课程可以从 Web 面板继续、重跑或编辑大纲/分镜/代码生成新版本；流水线阶段为：大纲 → 分镜 → TTS → 素材 → Manim 代码 → 渲染 → 视觉审计 → 合成。
 
 `src/run_agent.sh` 与 `src/run_agent_single.sh` 仅保留为旧环境兼容包装器；Windows 请使用 `scripts\run_windows.ps1` 或 Web 面板。
+
+## 独立视频项目与提示词
+
+新视频默认保存到 `projects/日期-知识点--ID/`，每个项目独立保存完整阶段提示词、课程要求、教材原件副本、例题参考、SVG 素材及绘制源码、Manim 源码、配音、渲染日志和最终视频。模型凭证留在根目录，项目配置快照脱敏；旧本地测试项目及产物已清理，可复用示例包保留。
+
+- Web：创建课程时可上传本视频完整模板、SVG/绘图源码和教材；任务卡支持项目路径显示、全部文件浏览、提示词编辑与独立新版本。
+- CLI：`--project` 指定独立项目，`--project-pack` 注入完整项目包，`--course-file` 提供本视频要求，`--prompts-dir` 提供完整模板，`--resource` 归档本视频参考资源。未指定项目目录时自动创建，原配置续跑使用项目内教材副本。
+- `projects/` 默认不提交 Git；根目录 `examples/video_project` 是无密钥的课程输入示例，不是生产任务目录。
+- 创建课程时保存公共默认配置，不把该视频的 `course` 要求写回全局。
+
+完整流程、目录约定和全部提示词入口见 `SOP.md` 第6、7、13节。

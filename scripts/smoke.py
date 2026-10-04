@@ -76,10 +76,10 @@ class MockService(BaseHTTPRequestHandler):
         stage = match[1] if match else "PROBE"
         COUNTS[stage] = COUNTS.get(stage, 0) + 1
         if stage == "OUTLINE":
-            sources = re.findall(r"\[([^\]\n]*lesson\.md:L\d+)\]", prompt)
-            result = {"topic": "增长率", "target_audience": "考公考生", "warnings": [], "sections": [{"id": "section_1", "title": "增长率", "goal": "理解分母", "key_points": ["基期作为分母"], "sources": sources[:1]}]}
+            sources = re.findall(r"\[([^\]\n]+(?:\:L\d+|#p\d+))\]", prompt)
+            result = {"topic": "数量比较", "target_audience": "学习者", "warnings": [], "sections": [{"id": "section_1", "title": "数量比较", "goal": "比较大小", "key_points": ["数量120大于100"], "sources": sources[:1]}]}
         elif stage == "STORYBOARD":
-            result = {"sections": [{"id": "section_1", "title": "增长率", "beats": [{"narration": "增长率的分母是基期量，不能用现期量。", "caption": "增长率 = 增长量 / 基期量", "visual": "用两个条形图展示100和120"}]}]}
+            result = {"sections": [{"id": "section_1", "title": "数量比较", "beats": [{"narration": "两组数量分别是一百和一百二十，第二组更多。", "caption": "120 > 100", "visual": "用两个条形图展示100和120"}]}]}
         elif stage == "CODE":
             code = "self.add(undefined_object)" if COUNTS[stage] == 1 else "base_bar = Rectangle(width=2, height=2, color=BLUE).shift(LEFT * 2)\ncurrent_bar = Rectangle(width=2, height=2.4, color=GREEN).shift(RIGHT * 2)\nself.play(Create(base_bar), Create(current_bar), run_time=0.5)"
             result = {"beats": [{"code": code}]}
@@ -103,18 +103,18 @@ def check_pdf(directory):
     font = DictionaryObject({NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"), NameObject("/BaseFont"): NameObject("/Helvetica")})
     page[NameObject("/Resources")] = DictionaryObject({NameObject("/Font"): DictionaryObject({NameObject("/F1"): writer._add_object(font)})})
     stream = DecodedStreamObject()
-    stream.set_data(b"BT /F1 16 Tf 20 240 Td (Base 100, current 120, growth rate 20 percent.) Tj ET")
+    stream.set_data(b"BT /F1 16 Tf 20 240 Td (Group A 100, group B 120, difference 20.) Tj ET")
     page[NameObject("/Contents")] = writer._add_object(stream)
     path = directory / "text.pdf"
     writer.write(str(path))
-    extracted = load_materials([path], "growth rate", DEFAULTS["materials"], "1")
+    extracted = load_materials([path], "quantity comparison", DEFAULTS["materials"], "1")
     require("100" in extracted["context"] and "#p1" in extracted["context"], "PDF 文本/页码丢失")
     writer = PdfWriter()
     writer.add_blank_page(width=400, height=300)
     scanned = directory / "scan.pdf"
     writer.write(str(scanned))
     try:
-        load_materials([scanned], "增长率", DEFAULTS["materials"])
+        load_materials([scanned], "数量比较", DEFAULTS["materials"])
     except ValueError as error:
         require("OCR" in str(error), "扫描PDF错误不明确")
     else:
@@ -138,6 +138,8 @@ def check_web(config, directory):
     import web.app as web
     web.WORKSPACE = directory / "web-workspace"
     web.WORKSPACE.mkdir()
+    web.PROJECTS = directory / "web-projects"
+    web.PROJECTS.mkdir()
     web.JOBS.clear()
     web.current_config = lambda: copy.deepcopy(config)
     web.save_config = lambda updates: merge(config, updates)
@@ -163,26 +165,99 @@ def check_web(config, directory):
     exposed = client.get("/api/config").get_data(as_text=True)
     require(config["text"]["api_key"] not in exposed, "配置返回了密钥")
     require(client.post("/api/models", json={}, headers=headers).status_code == 200, "模型列表查询失败")
-    response = client.post("/api/jobs", data={"topic": "增长率", "stop_after": "outline", "config": json.dumps(config), "files": (io.BytesIO("# 增长率\n基期100，现期120。".encode()), "lesson.md")}, headers=headers)
+    from lesson_prompts import TEMPLATES
+    project_config = merge(config, {"course": {"instructions": "FIRST_COURSE_ONLY"}})
+    response = client.post("/api/jobs", data={"topic": "数量比较", "stop_after": "outline", "config": json.dumps(project_config), "materials": (io.BytesIO("# 数量比较\n基期100，现期120。".encode()), "lesson.md"), "resources": [(io.BytesIO(b"def draw_svg():\n    return 'project only'\n"), "draw_icon.py"), (io.BytesIO(b'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/></svg>'), "local.svg"), (io.BytesIO("# 本课程例题参考".encode()), "example.md")], "prompt_templates": (io.BytesIO((TEMPLATES["outline"] + "\nFIRST_TEMPLATE_ONLY").encode()), "outline.txt")}, headers=headers)
     require(response.status_code == 200, response.get_data(as_text=True))
     identifier = response.get_json()["job_id"]
     wait_job(web, identifier)
-    snapshot = (web.WORKSPACE / identifier / "settings.json").read_text(encoding="utf-8")
+    base = web.job_root(identifier)
+    require(base.parent == web.PROJECTS.resolve(), "新 Web 任务没有独立项目目录")
+    snapshot = (base / "settings.json").read_text(encoding="utf-8")
     require(config["text"]["api_key"] not in snapshot, "任务快照复制了真实密钥")
     require(client.get(f"/api/jobs/{identifier}/file/output/outline.json").status_code == 200, "工件不可访问")
+    listing = client.get(f"/api/jobs/{identifier}/files").get_json()
+    paths = {item["path"] for item in listing["files"]}
+    require({"prompts/policy.txt", "prompts/outline.txt", "prompts/requirements.json", "materials/lesson.md", "examples/example.md", "code/svg/draw_icon.py", "code/runtime/scene_runtime.py", "output/assets/local/local.svg"}.issubset(paths), "项目输入没有完整归档")
+    require(any(path.startswith("output/requests/") and path.endswith(".txt") for path in paths), "实际模型提示词未记录")
+    require(config["text"]["api_key"] not in client.get(f"/api/jobs/{identifier}/config").get_data(as_text=True), "项目配置接口泄露密钥")
     for path in ("output/../settings.json", "output/../job.json", "materials/../settings.json", "output/../../other/settings.json"):
         require(client.get(f"/api/jobs/{identifier}/file/{path}").status_code == 400, "私密路径越权: " + path)
     response = client.post(f"/api/jobs/{identifier}/continue", json={"stop_after": "storyboard", "allow_generated_code": False}, headers=headers)
     require(response.status_code == 200, response.get_data(as_text=True))
     wait_job(web, identifier)
     outline = client.get(f"/api/jobs/{identifier}/file/output/outline.json").get_json()
-    outline["sections"][0]["title"] = "修改后的增长率"
+    outline["sections"][0]["title"] = "修改后的数量比较"
     response = client.post(f"/api/jobs/{identifier}/rerun", json={"stop_after": "outline", "edit_name": "outline.json", "edit_data": outline}, headers=headers)
     require(response.status_code == 200, response.get_data(as_text=True))
     changed = response.get_json()["job_id"]
     require(changed != identifier, "修改应创建新版本")
     wait_job(web, changed)
-    require(client.get(f"/api/jobs/{changed}/file/output/outline.json").get_json()["sections"][0]["title"] == "修改后的增长率", "编辑丢失")
+    require(client.get(f"/api/jobs/{changed}/file/output/outline.json").get_json()["sections"][0]["title"] == "修改后的数量比较", "编辑丢失")
+    require(web.job_root(changed) != base, "新版本未隔离目录")
+    require((web.job_root(changed) / "materials/lesson.md").is_file(), "新版本未复制教材")
+    require((web.job_root(changed) / "code/svg/draw_icon.py").is_file(), "新版本未复制绘图源码")
+    original = (base / "prompts/outline.txt").read_text(encoding="utf-8")
+    response = client.post(f"/api/jobs/{identifier}/rerun", json={"stop_after": "outline", "edit_name": "prompts/outline.txt", "edit_data": original + "\nSECOND_TEMPLATE_ONLY"}, headers=headers)
+    require(response.status_code == 200, response.get_data(as_text=True))
+    edited_id = response.get_json()["job_id"]
+    wait_job(web, edited_id)
+    require((base / "prompts/outline.txt").read_text(encoding="utf-8") == original, "编辑提示词污染了原项目")
+    require("SECOND_TEMPLATE_ONLY" in (web.job_root(edited_id) / "prompts/outline.txt").read_text(encoding="utf-8"), "完整模板编辑未生效")
+    response = client.post("/api/jobs", data={"topic": "第二个视频", "stop_after": "outline", "config": json.dumps(config), "materials": (io.BytesIO("# 第二个视频\n独立教材。".encode()), "lesson.md")}, headers=headers)
+    require(response.status_code == 200, response.get_data(as_text=True))
+    independent = response.get_json()["job_id"]
+    wait_job(web, independent)
+    other_base = web.job_root(independent)
+    require("FIRST_COURSE_ONLY" not in (other_base / "prompts/requirements.json").read_text(encoding="utf-8"), "课程要求串入新视频")
+    require("FIRST_TEMPLATE_ONLY" not in (other_base / "prompts/outline.txt").read_text(encoding="utf-8"), "完整模板串入新视频")
+    require("独立教材" in (other_base / "materials/lesson.md").read_text(encoding="utf-8"), "同名教材未独立保存")
+    require(not (other_base / "code/svg/draw_icon.py").exists(), "素材源码串入新视频")
+    web.JOBS.clear()
+    web.restore_jobs()
+    require(identifier in web.JOBS and independent in web.JOBS, "重启后项目任务未恢复")
+    legacy_id = "0123456789ab"
+    legacy = web.WORKSPACE / legacy_id
+    legacy.mkdir()
+    require(web.job_root(legacy_id) == legacy.resolve(), "旧 workspace 任务不兼容")
+
+
+def check_project_cli(config, directory, pack):
+    import contextlib
+    from agent import main as run_cli
+    from lesson_prompts import TEMPLATES
+    from video_project import safe_name
+    fixture = directory / "cli-config.json"
+    fixture.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+    requirements = directory / "course-input.json"
+    requirements.write_text(json.dumps({"course": {"instructions": "CLI_COURSE_ONLY", "prompts": {"outline": "CLI_OUTLINE_ONLY"}}, "video": {"theme": "light"}}, ensure_ascii=False), encoding="utf-8")
+    templates = directory / "cli-template-inputs"
+    templates.mkdir()
+    for name, template in TEMPLATES.items():
+        (templates / (name + ".txt")).write_text(template + "\nCLI_TEMPLATE_ONLY", encoding="utf-8")
+    material = directory / "cli-lesson.md"
+    material.write_text("# 数量比较\n两组数量分别为100和120，第二组比第一组多20。", encoding="utf-8")
+    drawing = directory / "draw_svg.py"
+    drawing.write_text("def draw_svg():\n    return 'local drawing'\n", encoding="utf-8")
+    base = directory / "cli-video-project"
+    common = ["--config", str(fixture), "--project", str(base), "--topic", "数量比较", "--protocol", "responses", "--base-url", config["text"]["base_url"], "--api-key", config["text"]["api_key"], "--model", "smoke-model", "--no-feedback", "--tts-provider", "http"]
+    require(run_cli(common + ["--project-pack", str(pack), "--course-file", str(requirements), "--prompts-dir", str(templates), "--material", str(material), "--resource", str(drawing), "--plan-only"]) == 0, "CLI 独立项目创建失败")
+    require((base / "output/storyboard.json").is_file(), "CLI 输出目录不正确")
+    require((base / "code/svg/draw_svg.py").is_file(), "CLI 绘图源码未归档")
+    requests = "\n".join(file.read_text(encoding="utf-8") for file in (base / "output/requests").glob("*.txt"))
+    require(all(marker in requests for marker in ("CLI_COURSE_ONLY", "CLI_OUTLINE_ONLY", "CLI_TEMPLATE_ONLY", "PACK_MATERIAL_ONLY")), "本视频专属提示词未用于 CLI 请求")
+    material.unlink()
+    counts = dict(COUNTS)
+    require(run_cli(common + ["--resume", "--stop-after", "storyboard"]) == 0, "CLI 删除外部原件后不能从项目教材副本续跑")
+    require(COUNTS == counts, "CLI 项目续跑不应重新调用模型")
+    template = base / "prompts/outline.txt"
+    template.write_text(template.read_text(encoding="utf-8") + "\nCHANGED_PROJECT_INPUT", encoding="utf-8")
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
+        result = run_cli(common + ["--resume", "--stop-after", "storyboard"])
+    require(result == 1 and "提示词" in captured.getvalue(), "修改完整模板后复用了过期缓存")
+    require(safe_name("a" * 100 + ".pdf").endswith(".pdf"), "长文件名丢失教材扩展名")
+    require(safe_name("COM9.py") != "COM9.py", "Windows 保留文件名未处理")
 
 
 def main():
@@ -209,23 +284,26 @@ def main():
         require(secret not in json.dumps(public_config({"token": secret, "text": config["text"]})), "密钥未脱敏")
         require(secret not in sanitize_error("Authorization: Bearer " + secret, config), "错误未脱敏")
         material = directory / "lesson.md"
-        material.write_text("# 增长率\n基期100，现期120，增长率为20%。", encoding="utf-8")
+        material.write_text("# 数量比较\n两组数量分别为100和120，第二组比第一组多20。", encoding="utf-8")
         output = directory / "pipeline"
         events = []
-        pipeline = VideoPipeline("增长率", config, output, [material], on_event=lambda event: events.append(event))
+        pipeline = VideoPipeline("数量比较", config, output, [material], on_event=lambda event: events.append(event))
         final = pipeline.run()
         require({"video", "audio", "subtitle"}.issubset({item["type"] for item in probe(final)["streams"]}), "最终视频轨道不完整")
         require(COUNTS.get("CODE", 0) >= 3, "自动调试/视觉反馈没有驱动代码修复")
         counts = dict(COUNTS)
-        VideoPipeline("增长率", config, output, [material], resume=True).run()
+        VideoPipeline("数量比较", config, output, [material], resume=True).run()
         require(COUNTS == counts, "续跑不应再次调用模型或TTS")
+        require((output / "materials/lesson.md").is_file(), "CLI 教材原件未复制到项目")
+        require((output / "code/manim/section_1_revision_0.py").is_file(), "Manim 绘图源码未存入项目")
+        require(config["text"]["api_key"] not in (output / "settings.json").read_text(encoding="utf-8"), "项目快照保存了真实密钥")
         switched_config = resolve_config(merge(config, {"vision": {"protocol": "responses"}}))
-        VideoPipeline("增长率", switched_config, output, [material], resume=True).run()
+        VideoPipeline("数量比较", switched_config, output, [material], resume=True).run()
         require(COUNTS.get("REVIEW", 0) == counts.get("REVIEW", 0) + 1, "更换视觉模型后必须重新评审")
         require(all(COUNTS.get(stage) == counts.get(stage) for stage in ("OUTLINE", "STORYBOARD", "CODE", "audio")), "更换视觉模型不应重跑前置阶段")
-        material.write_text("# 增长率\n修改后的教材内容。", encoding="utf-8")
+        material.write_text("# 数量比较\n修改后的教材内容。", encoding="utf-8")
         try:
-            VideoPipeline("增长率", config, output, [material], resume=True)
+            VideoPipeline("数量比较", config, output, [material], resume=True)
         except ValueError:
             pass
         else:
@@ -237,13 +315,16 @@ def main():
         pipeline.prepare_audio(section)
         after = json.loads((output / "audio/section_cache_01.json").read_text(encoding="utf-8"))["fingerprint"]
         require(before != after, "修改旁白后复用了过期配音")
+        from project_smoke import check_projects
+        pack = check_projects(config, directory)
         check_web(config, directory)
+        check_project_cli(config, directory, pack)
         if args.icons:
             from icon_assets import AssetManager
             settings = merge(DEFAULTS["assets"], {"enabled": True, "sources": {name: {"enabled": True} for name in DEFAULTS["assets"]["sources"]}})
             result = AssetManager(settings, directory).check()
             require(len(result) == 3 and all(item["ok"] for item in result), json.dumps(result, ensure_ascii=False))
-        print(json.dumps({"ok": True, "output": str(final), "checks": ["Responses", "Chat Completions", "OpenAI TTS", "HTTP TTS", "PDF", "Manim repair", "vision feedback", "FFmpeg MP4", "resume", "narration invalidation", "Web upload/edit/continue", "CSRF", "secret/path protection"], "edge": args.edge, "icons": args.icons}, ensure_ascii=False, indent=2))
+        print(json.dumps({"ok": True, "output": str(final), "checks": ["Responses", "Chat Completions", "OpenAI TTS", "HTTP TTS", "PDF", "Manim repair", "vision feedback", "FFmpeg MP4", "resume", "narration invalidation", "Web upload/edit/continue", "independent video projects", "full prompt editing", "SVG/source archiving", "project restore", "CSRF", "secret/path protection", "project packs", "extension manifest/AST", "runtime code invalidation", "isolated PYTHONPATH", "real extension render"], "edge": args.edge, "icons": args.icons}, ensure_ascii=False, indent=2))
     finally:
         server.shutdown()
         server.server_close()

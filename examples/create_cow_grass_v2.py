@@ -1,10 +1,9 @@
 import argparse
 import json
 import shutil
-import time
 from pathlib import Path
 
-import httpx
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,27 +41,6 @@ def storyboard():
     } for section in range(3)]}
 
 
-def request(client, method, route, **kwargs):
-    response = client.request(method, route, **kwargs)
-    response.raise_for_status()
-    return response.json()
-
-
-def wait_job(client, job_id):
-    last = None
-    while True:
-        job = request(client,"GET",f"/api/jobs/{job_id}")
-        state = (job["status"],job.get("message"))
-        if state != last:
-            print(job_id, *state, flush=True)
-            last = state
-        if job["status"] not in ("queued","running"):
-            if job["status"] in ("failed","error"):
-                raise RuntimeError(job.get("error") or job.get("message") or "任务失败")
-            return job
-        time.sleep(3)
-
-
 def seed_assets(output):
     assets = output / "assets"
     assets.mkdir(exist_ok=True)
@@ -78,45 +56,70 @@ def seed_assets(output):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="可重复修改的牛吃草浅色V2制作；通过现有 Web 流水线，无模型生成费用")
-    parser.add_argument("--parent",default="1ffb73363c20")
-    parser.add_argument("--orientation",choices=("landscape","portrait"),default="landscape")
-    parser.add_argument("--quality",choices=("low","high"),default="high")
-    parser.add_argument("--job-id")
-    parser.add_argument("--rate",default="+6%")
-    parser.add_argument("--stop-after",choices=("audio","code","compose"),default="compose")
+    sys.path.insert(0, str(ROOT / "src"))
+    from configuration import load_config, merge, resolve_config
+    from pipeline import VideoPipeline, save_json
+    from video_project import apply_project_pack, archive_resource, initialize_project, new_project_path, project_pack_config, restore_project_config
+
+    parser = argparse.ArgumentParser(description="牛吃草独立项目示例：固定教案和可信动画，不调用文本或视觉模型；配音仍需 TTS 服务")
+    parser.add_argument("--config")
+    parser.add_argument("--project")
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--orientation", choices=("landscape", "portrait"), default="landscape")
+    parser.add_argument("--quality", choices=("low", "high"), default="high")
+    parser.add_argument("--rate", default="+6%")
+    parser.add_argument("--stop-after", choices=("audio", "code", "compose"), default="compose")
+    parser.add_argument("--allow-generated-code", action="store_true")
     args = parser.parse_args()
-    with httpx.Client(base_url="http://127.0.0.1:8787",timeout=40) as client:
-        token = request(client,"GET","/api/session")["csrf"]
-        client.headers["X-C2V-CSRF"] = token
-        if args.job_id:
-            job_id = args.job_id
-            state = request(client,"GET",f"/api/jobs/{job_id}")
-            if state["status"] in ("queued","running"):
-                wait_job(client,job_id)
-        else:
-            overrides = {"vision":{"enabled":False},"tts":{"provider":"edge","voice":"zh-CN-XiaoxiaoNeural","rate":args.rate},"video":{"quality":args.quality,"theme":"light","orientation":args.orientation,"brand":"行测可视化 · 数量关系","max_sections":3,"max_beats":4,"pause_seconds":0.28,"render_timeout":900,"fix_attempts":0},"course":{"instructions":"浅色精美V2；牛吃草动态库存；只讲一道教学例题；使用可信动画模板；不伪称历年真题。"}}
-            result = request(client,"POST",f"/api/jobs/{args.parent}/rerun",json={"topic":"牛吃草 · 精美浅色 V2","config":overrides,"edit_name":"storyboard.json","edit_data":storyboard(),"stop_after":"storyboard","allow_generated_code":True})
-            job_id = result["job_id"]
-            print("VERSION",job_id,args.orientation,args.quality,flush=True)
-            wait_job(client,job_id)
-        output = ROOT / "workspace" / job_id / "output"
-        records = seed_assets(output)
+    if args.stop_after == "compose" and not args.allow_generated_code:
+        parser.error("渲染项目扩展会执行 Python，请明确传入 --allow-generated-code")
+    if args.resume and not args.project:
+        parser.error("续跑请指定 --project")
+    topic = "牛吃草 · 精美浅色 V2"
+    project = Path(args.project).resolve() if args.project else new_project_path(topic)
+    config = load_config(args.config)
+    pack = ROOT / "examples/video_project/cow_grass"
+    if args.resume:
+        if not (project / "settings.json").is_file():
+            parser.error("指定项目没有配置快照，不能续跑")
+        config = resolve_config(restore_project_config(project, config))
+    else:
+        if project.exists():
+            parser.error("项目目录已存在，请使用新目录或 --resume")
+        config = resolve_config(merge(merge(config, project_pack_config(pack)), {
+            "vision": {"enabled": False},
+            "tts": {"provider": "edge", "voice": "zh-CN-XiaoxiaoNeural", "rate": args.rate},
+            "video": {"quality": args.quality, "orientation": args.orientation, "max_sections": 3, "max_beats": 4, "pause_seconds": 0.28, "render_timeout": 900, "fix_attempts": 0},
+        }))
+        initialize_project(project, topic, config)
+        apply_project_pack(pack, project)
+        archive_resource(project, Path(__file__).name, Path(__file__).read_bytes())
+    output = project / "output"
+    materials = [] if args.resume else sorted((project / "materials").glob("*.md"))
+    pipeline = VideoPipeline(topic, config, output, materials, resume=args.resume, project=project)
+    if not args.resume:
+        source = pipeline.materials["selected_chunks"][0]["source"]
+        save_json(output / "outline.json", {"topic": topic, "target_audience": "行测数量关系初学者", "warnings": [], "sections": [
+            {"id": f"section_{index+1}", "title": title, "goal": title, "key_points": [title], "sources": [source]} for index, title in enumerate(TITLES)
+        ]})
+        save_json(output / "storyboard.json", storyboard())
+        seed_assets(output)
         for section in range(3):
-            save(output / f"section_{section+1}_code.json",{"beats":[{"code":f"self.cow_grass({section*4+beat})"} for beat in range(4)]})
-        request(client,"POST",f"/api/jobs/{job_id}/continue",json={"stop_after":"audio","allow_generated_code":True})
-        wait_job(client,job_id)
-        timed = json.loads((output / "timing.json").read_text(encoding="utf-8"))
+            save_json(output / f"section_{section+1}_code.json", {"beats": [
+                {"code": f'self.extension("cow_grass", {section*4+beat})'} for beat in range(4)
+            ]})
+    pipeline.run(stop_after="audio")
+    timed = json.loads((output / "timing.json").read_text(encoding="utf-8"))
+    if not (output / "storyboard_assets.json").exists():
+        records = json.loads((output / "assets.json").read_text(encoding="utf-8"))["assets"]
         for section in timed["sections"]:
             section["assets"] = records
-        save(output / "storyboard_assets.json",timed)
-        duration = sum(beat["duration"] for section in timed["sections"] for beat in section["beats"])
-        print("AUDIO_SECONDS",round(duration,3),"CUES",sum(len(beat.get("subtitles",[])) for section in timed["sections"] for beat in section["beats"]),flush=True)
-        if args.stop_after != "audio":
-            request(client,"POST",f"/api/jobs/{job_id}/continue",json={"stop_after":args.stop_after,"allow_generated_code":True})
-            wait_job(client,job_id)
-        save(output / "course_version.json",{"version":"V2-light","parent":args.parent,"orientation":args.orientation,"quality":args.quality,"duration":duration,"manual_review_required":True,"external_vision_review":"disabled; manual frame and math review required","template":"src/cow_grass_visuals.py","narration_script":"examples/create_cow_grass_v2.py"})
-        print("OUTPUT",output,flush=True)
+        save_json(output / "storyboard_assets.json", timed)
+    duration = sum(beat["duration"] for section in timed["sections"] for beat in section["beats"])
+    if args.stop_after != "audio":
+        pipeline.run(stop_after=args.stop_after)
+    save_json(output / "course_version.json", {"version": "V2-light", "orientation": config["video"]["orientation"], "quality": config["video"]["quality"], "duration": duration, "manual_review_required": True, "external_vision_review": "disabled; manual frame and math review required", "template": "code/runtime/extensions/cow_grass.py", "narration_script": "code/svg/create_cow_grass_v2.py"})
+    print("PROJECT", project, "AUDIO_SECONDS", round(duration, 3), flush=True)
 
 
 if __name__ == "__main__":

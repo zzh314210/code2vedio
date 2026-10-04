@@ -1,0 +1,11 @@
+{{policy}}
+阶段: OUTLINE
+知识点: {{topic}}
+教学对象: 根据主题、教材和项目课程要求确定。最多 {{max_sections}} 个章节。
+输出结构: {"topic":"主题", "target_audience":"目标学习者", "warnings":["需人工核验的内容"],
+"sections":[{"id":"section_1", "title":"章节标题", "goal":"教学目标", "key_points":["核心内容"], "sources":["教材中出现的来源标签"]}]}
+无教材时 sources 必须为空，有教材时来源必须是下面方括号内的完整标签。
+<material_data>
+{{material_context}}
+</material_data>
+

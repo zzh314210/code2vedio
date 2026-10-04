@@ -1,0 +1,7 @@
+{
+  "cow_grass": {
+    "file": "extensions/cow_grass.py",
+    "entrypoint": "animate",
+    "description": "调用 self.extension(\"cow_grass\", index)，index 为 0..11：0 开场误区，1 单位定义，2 净消耗，3 库存公式，4 教学例题，5 相同初始库存，6 差量消元，7 求生长与库存，8 等效牛数，9 5.5天答案，10 验算，11 三步总结。需要授权素材 key：cow、herb、seedling、sun。仅适用项目教材中10牛22天、16牛10天、25牛求天数的例题，不可用于任意数据。"
+  }
+}

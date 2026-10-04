@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from threading import Lock
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from gpt_request import request_gemini_with_video
 from prompts import get_prompt_aes

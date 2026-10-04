@@ -24,10 +24,11 @@ DEFAULTS = {
         "quality": "medium", "font": "Microsoft YaHei", "fps": 30,
         "max_sections": 4, "max_beats": 5, "fix_attempts": 3,
         "render_timeout": 300, "pause_seconds": 0.3,
-        "theme": "dark", "orientation": "landscape", "brand": "考公 · 可视化课堂",
+        "theme": "dark", "orientation": "landscape", "brand": "教学 · 可视化课堂",
+        "narration_max_chars": 140, "caption_max_chars": 42, "subtitle_language": "zho",
     },
     "materials": {"max_chars": 24000, "max_file_mb": 50},
-    "course": {"instructions": "", "prompts": {}},
+    "course": {"language": "中文", "instructions": "", "prompts": {}},
     "assets": {
         "enabled": False, "strategy": "first_success", "strict": False,
         "color": "#58C4DD", "max_per_section": 2, "timeout": 20,

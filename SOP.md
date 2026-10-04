@@ -128,7 +128,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ### 3.3 配置保存与保密
 
-- 面板配置保存在根目录 `config.local.json`；也可用 `.env` 引用密钥。
+- 根目录 `config.local.json` 是模型、TTS、素材和画面等默认配置；也可用 `.env` 引用密钥。
+- 创建／重跑课程时，“保存模型、语音、素材等为默认”只更新公共设置，不会把本视频 `course` 要求写回全局。单独点击“保存配置”仍可主动设置默认课程预设。
+- 每个视频项目另外保存脱敏 `settings.json`、完整提示词和课程要求副本；已创建项目不会跟随全局提示词变化。模型/API 的默认值改变影响新项目，旧项目续跑保留原服务和模型，用当前匹配服务的凭证恢复密钥。
 - 已保存的 Key 不回显到浏览器，留空不会覆盖已有 Key；需要更换时填写新 Key 并保存。
 - `.env` 中的 `C2V_TEXT_*`、`C2V_VISION_*`、`C2V_TTS_*` 等环境覆盖项可能影响有效配置；面板修改不生效时应核对这些项。
 - 不把含真实密钥的配置、命令历史或截图发到公开渠道，不把 `config.local.json`、`.env` 或私有任务配置提交到 Git。
@@ -189,7 +191,61 @@ Edge TTS 不需要 Key，但需要联网，并不是 Windows 离线系统朗读�
 
 本次牛吃草 V2 采用已下载的 Noto 彩色 SVG，经 Iconify 公共 API 获取，以保持牛、草、幼苗和太阳的统一风格。它是专项课程脚本预置的素材，不是 Web 面板中的第四个通用勾选源，也不代表以后每个课程自动使用 Noto。
 
-## 6. 准备教案：一次视频只聚焦一个知识点
+## 6. 视频项目与教材：一个视频一个独立目录
+
+### 6.1 应用目录与视频项目目录要分开
+
+仓库根目录是生产系统，不是某一门课程。`.venv`、`src`、`web`、`scripts` 和默认 API 凭证共用；每个新视频拥有独立的输入、提示词、素材、绘图代码和生产过程，不必复制一套虚拟环境。
+
+新 Web 任务与未指定目录的新 CLI 任务，会创建：
+
+```text
+E:\gptandcc\Code2Video\projects\
+└── 20261004-行测数量关系：牛吃草问题--任务ID\
+    ├── README.md                  本视频项目说明
+    ├── project.json               标题、ID、创建时间、父版本
+    ├── job.json                   Web 任务状态；CLI 不一定有
+    ├── settings.json              本项目配置快照，真实密钥已脱敏
+    ├── prompts\
+    │   ├── policy.txt             本项目公共教学规则
+    │   ├── outline.txt            完整大纲模板
+    │   ├── storyboard.txt         完整分镜／旁白模板
+    │   ├── code.txt               完整 Manim 生成／修复模板
+    │   ├── review.txt             完整视觉审核模板
+    │   └── requirements.json      本项目全局要求和各阶段补充
+    ├── materials\                 实际使用的原始 Markdown/PDF 副本
+    ├── examples\                  本视频例题、示例和设计参考
+    ├── code\
+    │   ├── runtime\               本项目实际使用的绘图运行代码副本
+    │   ├── svg\                   提供的 SVG 绘制源码；不会自动执行
+    │   └── manim\                 生成的章节 Python 源码及修订版
+    └── output\
+        ├── materials.json         教材选段与来源
+        ├── outline.json           大纲
+        ├── storyboard.json        旁白、字幕、动画步骤
+        ├── requests\              实际模型提示词及协议/模型/帧路径记录
+        ├── audio\                 配音、时长和字幕时间戳
+        ├── assets\                本项目 SVG 本体；local 子目录是上传素材
+        ├── section_*\             Manim 源码、各轮渲染、媒体缓存和日志
+        ├── events.jsonl           阶段事件记录
+        ├── ATTRIBUTION.md          素材出处和许可提示
+        ├── final.mp4               最终视频
+        └── subtitles.srt          字幕文件
+```
+
+目录名中的 Windows 非法字符会自动替换，因此实际标题中的冒号通常变成下划线；以页面显示的项目目录为准。每次修改生成新版本，也创建新目录，用 `project.json` 的 `parent` 关联原版本，不覆盖旧成品。
+
+- 页面任务卡直接显示项目路径，点击“项目全部文件”浏览输入、提示词、素材、绘图源码与成品；点击“载入项目配置”查看该视频自己的设置。
+- 根目录 `examples` 只是共享示例模板库。作为教材传入的示例会复制到项目 `materials`，作为参考资源传入的示例会复制到项目 `examples`，运行不依赖原教材文件一直存在。
+- 需要 AI 阅读的例题和教材放在上传教材入口或 `--material`；资源栏中的 `.md/.json` 只做归档，不会自动加入模型上下文。
+- SVG 本体保存在本项目；提供的 `.py` 绘制源码保存在 `code/svg`，生成的 Manim 源码和实际绘图运行代码分别保存在 `code/manim`、`code/runtime`。上传的 SVG 会安全清理；上传 Python 仅归档，不会自动运行。
+- 下载图标保留 SVG 标记、来源与许可提示，但第三方图标未必提供生成程序，不能声称每个下载图标都有 Python 绘制源码。
+- 新项目默认模板是初始副本；其他视频的模板或教材不会因同名而覆盖本项目。提示词、教材、示例或绘图运行源码改变后，不允许直接复用旧缓存，应新建版本。
+- 旧测试用的 `workspace\`、`outputs\` 内容已清理；以后若存在正式旧项目，应保留其独立项目目录，不把成片搬回根目录。
+- 旧 CLI 若尚无教材副本，第一次续跑仍需传入原 `--material` 和 PDF 页码；新项目保存教材顺序与页码，可直接从项目内部续跑。
+- `projects/` 已加入 Git 忽略规则。API Key 留在根目录 `.env/config.local.json`，项目配置快照不复制真实 Key；项目教案和实际提示词仍可能是私有资料，不应直接公开整个目录。
+
+### 6.2 准备本视频教材
 
 支持 `.md`、`.markdown` 和**文本型 PDF**，可以上传多个文件。建议先整理相关教案，而不是上传整本教材让模型自行猜测。
 
@@ -232,6 +288,65 @@ PDF 注意：
 
 ## 7. 设置课程风格、浅色画面和横竖屏
 
+### 7.1 全部提示词入口
+
+日常不必改 Python。每个视频的输入分为“讲什么”的教材和“怎么讲”的创作要求：
+
+| 输入 | Web 位置 | CLI／配置字段 | 项目内位置 |
+| --- | --- | --- | --- |
+| 知识点 | 创建课程 → 知识点标题 | `--topic` | `project.json` 的 `topic` |
+| 教材、例题、答案 | Markdown/PDF 教案 | `--material`，可重复 | `materials/` |
+| 全局创作要求 | 全局课程风格 | `course.instructions` | `prompts/requirements.json` 的 `instructions` |
+| 大纲补充 | 大纲阶段补充 | `course.prompts.outline` | 同文件 `prompts.outline` |
+| 分镜／旁白补充 | 分镜阶段补充 | `course.prompts.storyboard` | 同文件 `prompts.storyboard` |
+| 代码／调试补充 | 代码阶段补充 | `course.prompts.code` | 同文件 `prompts.code` |
+| 审核补充 | 视觉评审阶段补充 | `course.prompts.review` | 同文件 `prompts.review` |
+| 完整阶段模板 | 可选：本视频完整提示词模板 | `--prompts-dir` | `prompts/*.txt` |
+| 参考示例／SVG／绘制源码 | 本视频 SVG、绘图源码、示例参考 | `--resource`／`--example`，可重复 | `examples/`、`output/assets/local/`、`code/svg/` |
+
+全局创作要求会追加到四个阶段；没有单独的调试字段，调试复用代码模板和 `course.prompts.code`，再加入原代码与错误／审核意见。视觉补充仅在启用评审时使用。
+
+教材是事实依据，不是指令。风格、时长和构图要求写到课程要求中，不要只塞进教材。TTS 不另行生成讲稿：朗读分镜 `sections[].beats[].narration`，画面字幕使用 `caption`；要改口播，编辑分镜并生成新版本。
+
+CLI 推荐使用本视频独立的课程输入文件，而不是反复改根目录 `config.local.json`。示例项目包中的 `examples/video_project/cow_grass/course.json` 和 `examples/video_project/civil_service/course.json` 都采用以下结构：
+
+```json
+{
+  "course": {
+    "instructions": "面向行测初学者，约2分钟，先直觉后公式，讲清原理和一道例题。",
+    "prompts": {
+      "outline": "只讲一个核心方法，突出适用条件与易错点。",
+      "storyboard": "旁白口语化，每句对应一个可视化步骤，公式适合朗读。",
+      "code": "浅色背景、深色文字，优先图形推导，有授权素材时使用 self.asset。",
+      "review": "检查数字、公式、中文、对比度和推理步骤是否一致。"
+    }
+  },
+  "video": {"theme": "light", "orientation": "landscape"}
+}
+```
+
+通过 `--course-file` 传入上述 JSON；也支持仅含 `instructions/prompts` 的 JSON 对象。这个文件会落实为本项目要求和设置快照，不会改写其他项目。Web 创建时则直接使用本次页面输入。
+
+### 7.2 修改本项目完整模板
+
+每个项目都有 `policy.txt`、`outline.txt`、`storyboard.txt`、`code.txt`、`review.txt`，不是只记录几句补充。可在任务卡点“编辑项目提示词/大纲/分镜/代码”，选择 `prompts/` 下的文件，保存为独立新版本。
+
+新任务也可直接上传上述命名的 `.txt` 文件；未上传的模板使用默认副本。CLI 用 `--prompts-dir "你的模板目录"`，该目录需包含全部五个文件。
+
+| 模板 | 可用占位符 |
+| --- | --- |
+| 各阶段通用 | `{{policy}}`，在使用该占位符的位置插入公共规则 |
+| 大纲 | `{{topic}}`、`{{max_sections}}`、`{{material_context}}` |
+| 分镜 | `{{outline_json}}`、`{{max_beats}}`、`{{material_context}}` |
+| 代码 | `{{section_json}}`、`{{previous_json}}`、`{{feedback}}`、`{{layout_bounds}}`、`{{background}}`、`{{primary}}`、`{{emphasis}}`、`{{secondary}}`、`{{foreground}}` |
+| 审核 | `{{section_json}}` |
+
+不要随意删除输出 JSON 结构或阶段标识；陌生占位符会报错，输出仍受结构与 AST 安全检查。`output/requests` 保存实际使用的完整提示词，含教材选段、修复反馈和结构化重试要求，方便复盘，而不是只保存原始模板。
+
+默认模板源在 `src/lesson_prompts.py`，追加补充的逻辑在 `src/pipeline.py`。修改默认源码只影响之后创建的项目；已有项目使用自己的副本。改源码后重启 Web；修改项目输入应保存成新版本，不在运行中切换。
+
+### 7.3 画面设置不是提示词开关
+
 “课程创作要求”中可填写全局风格和大纲、分镜、代码、评审阶段补充。推荐全局要求：
 
 ```text
@@ -266,7 +381,7 @@ PDF 注意：
 重要规则：
 
 - 高级 JSON 的同名字段优先于面板普通输入。例如上面写了 `quality=high`，仅把普通质量下拉改成“低”不会生效，需要同时修改或移除高级 JSON 中的质量字段。
-- 高级 JSON 可同时包含 `video`、`vision`、`assets`、`tts`；合并为一个 JSON 对象，不能直接粘贴两个并列的 JSON 对象。
+- 高级 JSON 可同时包含 `course`、`video`、`vision`、`assets`、`tts`；合并为一个 JSON 对象，不能直接粘贴两个并列的 JSON 对象。
 - 修改后点击“保存配置”；样式、质量或配音改变时用新任务／新版本，不能仅续跑旧缓存。
 - 横屏高质量为 1920×1080；竖屏高质量为 1080×1920。竖屏低／中质量当前使用 540×960，适合预览。
 - “约2分钟”是创作目标，不是硬性的精确120秒限制，最终时长以真实音频和合成结果为准。
@@ -274,6 +389,8 @@ PDF 注意：
 ## 8. 推荐生产流程：先审教案，再生成成片
 
 ### 8.1 创建课程，先停在分镜
+
+制作新知识点先点“新视频 · 清空课程输入”，避免沿用上一视频的题目、上传文件、PDF 页码或阶段补充。模型、语音和素材默认设置可复用。之后的每次创建仍会生成新的项目目录。
 
 1. 确认模型连通、TTS试听正常；需要素材时检查已勾选源。
 2. 填写“知识点”，例如“行测数量关系：牛吃草问题”。
@@ -330,21 +447,17 @@ PDF 注意：
 
 ### 10.1 成品位置
 
-- Web 生成：`workspace\任务ID\output\final.mp4`。
-- 命令行生成：`outputs\知识点-时间\final.mp4`，或你通过 `--output` 指定的目录。
+- 新 Web／默认 CLI 生成：`projects\日期-知识点--ID\output\final.mp4`。
+- CLI 指定 `--project "projects\牛吃草-v001"`：`projects\牛吃草-v001\output\final.mp4`。
+- `--output` 作为项目目录兼容参数，新项目也使用其 `output` 子目录；旧 CLI 原目录续跑会识别原有顶层 `manifest.json`，保持旧成片路径。
+- 旧测试用的 `workspace\` 和 `outputs\` 已清理；正式项目的成片统一以对应 `projects\...\output\final.mp4` 为准。
 - 面板成品任务卡片可直接播放，并点击“下载最终 MP4”。
 - 字幕：同目录 `subtitles.srt`；素材出处：同目录 `ATTRIBUTION.md`。
 - 任务ID记录在面板卡片中，定位时不要把其他任务或预览版当成新成片。
 
-### 10.2 当前牛吃草成片
+### 10.2 牛吃草项目包
 
-| 版本 | 文件 |
-| --- | --- |
-| 精美浅色 V2 横屏，1920×1080，约120.7秒 | `workspace\9420f0c89126\output\final.mp4` |
-| 精美浅色 V2 竖屏，1080×1920，约120.7秒 | `workspace\be9bf5b8c87f\output\final.mp4` |
-| 保留的 V1 | `workspace\1ffb73363c20\output\final.mp4` |
-
-两份 V2 均有 Edge 中文配音和36条短句字幕。验收记录见 `examples\cow_grass_v2_acceptance.md`。本课未启用外部视觉模型审计，做了人工抽帧和数学、轨道、时长检查，不应误称自动视觉审计通过。
+牛吃草不再依赖根目录的固定任务或成片路径。使用 `examples\video_project\cow_grass` 创建新项目；成片写入该项目的 `output`，验收记录模板见 `examples\cow_grass_v2_acceptance.md`。本课未启用外部视觉模型审计时，应明确记录人工检查结果，不应误称自动视觉审计通过。
 
 ### 10.3 发布前检查清单
 
@@ -370,59 +483,65 @@ PDF 注意：
 - 只是中断恢复：保持教材和配置不变，点击“继续”。
 - 新知识点／新教材：创建课程并重新上传；“修改配置后重跑”会复用原任务教材，不是重新上传入口。
 - 调整配音、内容、画面、清晰度：创建新版本，不直接复用旧渲染缓存。
-- 修改 `src\cow_grass_visuals.py` 等本地模板源码后，也应生成新版本。旧任务续跑可能跳过已有章节，不会自动知道源码变了。
+- 修改项目包中的 `code\runtime\extensions\cow_grass.py` 或 `extensions.json` 后，也应生成新项目版本。旧项目续跑可能跳过已有章节，不会自动把新扩展当作旧缓存的一部分。
 - 不手动覆盖 `final.mp4` 或删除任务缓存来碰运气；保留可追溯版本。
 - 有任务正在运行时，不要重复点击创建、重跑；它们可能产生多个收费任务。
 
 ## 12. 牛吃草精修模板复跑：区别于通用 AI 生成
 
-`examples\create_cow_grass_v2.py` 是这节课的专项制作脚本：固定的12个精修动画镜头和旁白，利用现有 Web 流水线生成横／竖屏新版本，不是其他知识点的通用模板。
+`examples\create_cow_grass_v2.py` 是这节课的专项制作脚本：固定的12个精修动画镜头和旁白，直接使用项目内扩展生成横／竖屏新版本，不依赖 Web 服务，不是其他知识点的通用模板。
 
-前置条件：Web 面板在 **8787** 端口运行，原任务 `workspace\1ffb73363c20` 仍存在，`examples\assets\noto` 的 SVG 文件保留。
+前置条件：已安装项目虚拟环境；专项脚本会使用牛吃草项目包，并把运行时扩展和资源归档到新项目。旧 `workspace\` 测试任务不再是前置条件。
 
 ```powershell
 cd E:\gptandcc\Code2Video
-.\.venv\Scripts\python.exe examples\create_cow_grass_v2.py --quality high
+.\.venv\Scripts\python.exe examples\create_cow_grass_v2.py --quality high --allow-generated-code
 ```
 
 竖屏新版本：
 
 ```powershell
-.\.venv\Scripts\python.exe examples\create_cow_grass_v2.py --orientation portrait --quality high
+.\.venv\Scripts\python.exe examples\create_cow_grass_v2.py --orientation portrait --quality high --allow-generated-code
 ```
 
-每次不指定任务ID时创建独立新版本，控制台输出 `VERSION` 和 `OUTPUT`。若 Web 改用其他端口，该专项脚本当前不会自动跟随，需要修改脚本中的地址；通用面板使用不受影响。
+每次不指定 `--project` 时创建独立新项目，控制台输出 `PROJECT` 和 `AUDIO_SECONDS`，成片位于该项目的 `output\final.mp4`。中断恢复使用 `--project "项目目录" --resume --allow-generated-code`，无需启动 Web 或修改端口。
 
 制作其他知识点用第8节的上传教案／创建课程流程，不要只改此脚本的课程标题。
 
 ## 13. 命令行备选流程
 
-不使用 Web 时，可直接运行项目虚拟环境。需要与浏览器任务相同的“分阶段检查 → 渲染”原则。
+不使用 Web 时，可直接运行共用虚拟环境，输入与输出仍属于本视频独立项目。需要与浏览器任务相同的“分阶段检查 → 渲染”原则。
 
 先生成大纲和分镜：
 
 ```powershell
 cd E:\gptandcc\Code2Video
 .\.venv\Scripts\python.exe src\agent.py --config config.local.json `
-  --topic "行测资料分析：增长率" `
-  --material "examples\增长率.md" `
-  --output "outputs\增长率-01" `
+  --project "projects\牛吃草-v001" `
+  --topic "行测数量关系：牛吃草问题" `
+  --project-pack "examples\video_project\cow_grass" `
+  --material "examples\牛吃草教案.md" `
   --plan-only
 ```
 
-检查该目录的 `outline.json`、`storyboard.json` 后，以**相同知识点、教材、配置和输出目录**继续：
+检查该项目 `output` 子目录中的 `outline.json`、`storyboard.json` 后，以**相同知识点和项目目录**继续。程序恢复该项目配置快照，并读取项目内教材副本，不必依赖原教材路径：
 
 ```powershell
 .\.venv\Scripts\python.exe src\agent.py --config config.local.json `
-  --topic "行测资料分析：增长率" `
-  --material "examples\增长率.md" `
-  --output "outputs\增长率-01" `
+  --project "projects\牛吃草-v001" `
+  --topic "行测数量关系：牛吃草问题" `
   --resume --allow-generated-code
 ```
 
 PDF 用 `--material "你的路径\教案.pdf" --pdf-pages "2-5,8"`；多个教材可重复添加 `--material`。
 
-不要在两次命令之间改变画面质量、主题、TTS或教材。需要修改时用新的 `--output` 目录；CLI主要用于运行，不推荐手动编辑缓存JSON来做版本管理，内容编辑优先用Web的“保存为新版本”。
+项目配置 `video.narration_max_chars`、`video.caption_max_chars` 控制分镜字符上限（默认 140/42），实际上限同时注入分镜提示词；`video.subtitle_language` 控制成片字幕轨语言标记（默认 `zho`）。`course.language` 会注入四个阶段的提示词（默认“中文”），不会自动替换 TTS 语音或字体。
+
+可选输入：`--prompts-dir "本课程完整模板目录"`、`--resource "本课程\草.svg"`、`--resource "本课程\draw_grass.py"`、`--example "本课程\例题参考.md"`；资源参数可重复。SVG 可用于启用素材后的代码生成，Python 仅归档，参考文档若要模型阅读仍需使用 `--material`。
+
+不指定 `--project` 时自动创建日期、知识点与随机 ID 命名的项目。续跑必须明确指定 `--project` 或 `--output`；不能只传 `--resume`，否则无法知道要续跑哪一门课程。
+
+不要在两次命令之间改变项目提示词、示例、绘图代码、质量、TTS或教材。需要修改时创建新的 `projects\牛吃草-v002`，或在 Web 使用“保存为新版本”。根目录 API 默认值改变不会把已有项目的模型悄悄替换；若原服务地址与当前凭证不一致会拒绝恢复，需提供匹配凭证或创建新版本。
 
 ## 14. 常见故障处理
 
@@ -453,6 +572,6 @@ PDF 用 `--material "你的路径\教案.pdf" --pdf-pages "2-5,8"`；多个教�
 
 ## 15. 必须保留的文件与日常顺序
 
-保留：`.venv`、`config.local.json`、`.env`、`workspace`、`outputs`、`examples` 和项目源码。虚拟环境可按安装脚本重建，但任务目录和教案是版本资产，不能误删。
+保留：`.venv`、`config.local.json`、`.env`、`projects`、历史 `workspace/outputs`、`examples` 和项目源码。每个 `projects` 子目录包含课程输入和版本资产，不能只留 MP4 后删除教材、提示词与绘图代码。虚拟环境可重建，课程项目应整体备份。
 
 日常顺序：**启动 → 打开面板 → 核对配置 → 上传教案 → 先审大纲/分镜 → 试听配音 → 允许渲染 → 等待合成 → 完整验收 → 导出 → 修改时生成新版本。**

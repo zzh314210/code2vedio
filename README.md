@@ -311,13 +311,13 @@ We evaluate along **three complementary dimensions**:
 1. **Knowledge Transfer (TeachQuiz)**
 
    ```bash
-   python3 eval_TQ.py
+   python3 legacy/src/eval_TQ.py
    ```
 
 2. **Aesthetic & Structural Quality (AES)**
 
    ```bash
-   python3 eval_AES.py
+   python3 legacy/src/eval_AES.py
    ```
 
 3. **Efficiency Metrics (During Video Creating)**
@@ -363,6 +363,10 @@ If you like our project, please give us a star ⭐ on [GitHub](https://github.co
 
 ## 2026 Windows workflow
 
+Blank projects use neutral prompts and branding without domain extensions. Use `--project-pack examples\video_project\civil_service` for civil-service requirements; the cow-grass pack is in `examples/video_project/cow_grass`. Trusted extensions are explicitly registered in project `code/runtime/extensions.json` and invoked via `self.extension("name", ...)`. Rendering does not import repository `src/`; uploaded Python is archived, not automatically executed.
+
+Historical research code and prompts are isolated under `legacy/`; the earlier setup and benchmark commands are historical reference. Follow this section, `SOP.md`, and `examples/video_project/README.md` for the current workflow.
+
 Use the native Windows workflow with an isolated `.venv`, the Tsinghua PyPI mirror, local Manim + FFmpeg rendering, and the local Web panel.
 
 ```powershell
@@ -375,7 +379,8 @@ Open `http://127.0.0.1:8787`. Configure the text model, optional independent vis
 
 ```powershell
 .\.venv\Scripts\python.exe src\agent.py --config config.local.json `
-  --topic "公务员资料分析：增长率" --material examples\增长率.md `
+  --project "projects\lesson-001" --topic "资料分析：增长率" `
+  --project-pack "examples\video_project\civil_service" --material examples\增长率.md `
   --allow-generated-code --feedback
 ```
 
@@ -388,3 +393,9 @@ Text/lesson planning, vision audit, TTS, and icons are independently configurabl
 The Web panel supports resume, rerun, and versioned editing of the outline, storyboard, and generated code. The pipeline is: outline → storyboard → TTS → assets → Manim code → render → vision audit → compose.
 
 `src/run_agent.sh` and `src/run_agent_single.sh` are legacy compatibility wrappers. On Windows use `scripts\run_windows.ps1` or the Web panel.
+
+## Independent video projects
+
+New videos are stored in `projects/date-topic--id/`. Each project owns its full prompt templates, course requirements, original material copies, examples, SVG assets and supplied drawing sources, generated Manim Python, runtime source snapshots, narration, render logs, and final output. Credentials stay in the application configuration; project settings are redacted. Old local test projects and outputs have been removed; reusable example packs remain.
+
+The Web panel supports project file browsing, prompt editing, resource uploads, and independent revisions. CLI inputs include `--project`, `--project-pack`, `--course-file`, `--prompts-dir`, and repeatable `--resource`. Projects are Git-ignored; `examples/video_project` contains credential-free input examples. See `SOP.md` sections 6, 7, and 13 for the complete Windows workflow.
