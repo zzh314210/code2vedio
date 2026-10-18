@@ -28,4 +28,4 @@ if (-not (Test-Path -LiteralPath $local)) { Copy-Item -LiteralPath (Join-Path $r
 $env:PYTHONUTF8 = '1'
 & $python (Join-Path $root 'src\agent.py') --doctor
 if ($LASTEXITCODE -ne 0) { throw 'Environment check failed.' }
-Write-Output 'Ready. Start the panel with scripts\start_web.ps1.'
+Write-Output 'Ready. Run src\agent.py --help for CLI options.'

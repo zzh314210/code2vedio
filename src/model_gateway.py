@@ -2,6 +2,8 @@ import base64
 import json
 import mimetypes
 import re
+import time
+from types import SimpleNamespace
 from pathlib import Path
 
 from openai import OpenAI
@@ -28,6 +30,7 @@ class ModelGateway:
         validate_model(settings, role)
         self.settings = settings
         self.role = role
+        self.primary_model = settings["model"]
         self.on_request = on_request
         self.client = OpenAI(
             api_key=settings["api_key"], base_url=settings["base_url"].rstrip("/"),
@@ -36,6 +39,36 @@ class ModelGateway:
         self.usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     def request(self, prompt, images=None, max_tokens=None):
+        # Keep the endpoint, authentication and image payload identical across models.
+        configured = [getattr(self, "primary_model", self.settings["model"]), *self.settings.get("fallback_models", [])]
+        legacy = self.settings.get("quota_fallback_model")
+        if legacy:
+            configured.append(legacy)
+        models = list(dict.fromkeys(configured))
+        current = self.settings["model"]
+        if current in models:
+            start = models.index(current)
+            models = models[start:] + models[:start]
+        failures = []
+        for index, model in enumerate(models):
+            self.settings = {**self.settings, "model": model}
+            try:
+                return self._request(prompt, images, max_tokens)
+            except Exception as failure:
+                # Keep archived quota-only policies compatible; new fallback_models
+                # explicitly authorize failover for every failed request and role.
+                if not self.settings.get("fallback_models") and legacy:
+                    detail = str(failure).lower()
+                    exhausted = any(marker in detail for marker in ("insufficient_quota", "quota_exceeded", "quota exhausted", "quotaexceeded", "exceeded your current quota", "free tier quota", "arrearage"))
+                    if self.role != "text" or not exhausted:
+                        raise
+                failures.append(failure)
+                if index + 1 < len(models):
+                    print(f"[{self.role}] {model} request failed; switching to {models[index + 1]}", flush=True)
+        # Preserve the SDK exception type/status for the existing error handler.
+        raise failures[-1]
+
+    def _request(self, prompt, images=None, max_tokens=None):
         if self.on_request:
             self.on_request(self.role, prompt, images or [])
         limit = int(max_tokens or self.settings.get("max_tokens", 12000))
@@ -59,8 +92,36 @@ class ModelGateway:
             arguments = {self.settings.get("token_parameter", "max_completion_tokens"): limit}
             response = self.client.chat.completions.create(
                 model=self.settings["model"], messages=[{"role": "user", "content": content}],
-                extra_body=extra, **arguments,
+                extra_body=extra, stream=bool(self.settings.get("stream", False)), **arguments,
             )
+            if self.settings.get("stream", False):
+                started = time.monotonic()
+                last_progress = started
+                fragments = []
+                finish = None
+                usage = None
+                reasoning_chars = 0
+                try:
+                    for chunk in response:
+                        elapsed = time.monotonic() - started
+                        if elapsed > float(self.settings.get("total_timeout", 600)):
+                            raise TimeoutError("Model stream exceeded total_timeout")
+                        if chunk.usage is not None:
+                            usage = chunk.usage
+                        for choice in chunk.choices:
+                            if choice.delta.content:
+                                fragments.append(choice.delta.content)
+                            reasoning_chars += len(getattr(choice.delta, "reasoning_content", None) or "")
+                            if choice.finish_reason:
+                                finish = choice.finish_reason
+                        if time.monotonic() - last_progress >= 20:
+                            print(f"[{self.role}] model stream: {elapsed:.0f}s, content={sum(map(len, fragments))} chars, reasoning={reasoning_chars} chars", flush=True)
+                            last_progress = time.monotonic()
+                finally:
+                    response.close()
+                if finish != "stop":
+                    raise ValueError(f"Model stream did not complete: {finish}")
+                response = SimpleNamespace(choices=[SimpleNamespace(finish_reason=finish, message=SimpleNamespace(content="".join(fragments)))], usage=usage)
             if not response.choices or response.choices[0].finish_reason in ("length", "content_filter"):
                 raise ValueError("Chat Completions 输出被截断/过滤；请提高 max_tokens 或检查输入")
             text = response.choices[0].message.content

@@ -6,21 +6,28 @@ import os
 import re
 import sys
 import textwrap
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from configuration import public_config, sanitize_error
 from lesson_prompts import outline_prompt, storyboard_prompt, code_prompt, review_prompt
 from materials import load_materials
-from media import concat, fit_audio, mux, probe, run_command, sample_frames, write_subtitles
+from media import concat, fit_audio, prepend_audio_silence, mux, probe, run_command, sample_frames, write_subtitles
 from model_gateway import ModelGateway
 from narration import Narrator
+from planning_review import PlanningPending
+from teaching_research import enabled_for, prepare_research, research_context, validate_step_coverage
+from series_style import validate_style_snippet
+from styles import StylePackage, load_style, snapshot_hash, style_video_config, style_stage_policy
 from icon_assets import AssetManager
 from project_extensions import read_extensions
-from video_project import initialize_project, input_fingerprint, local_assets, read_templates, snapshot_materials
+from video_project import archive_resource, initialize_project, input_fingerprint, local_assets, read_templates, snapshot_materials
 
 
 def save_json(filename, value):
+    from execution import validate_output
+    validate_output(filename.parent, filename)
     temporary = filename.with_suffix(filename.suffix + ".tmp")
+    validate_output(filename.parent, temporary)
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(filename)
 
@@ -31,6 +38,18 @@ def nonempty(value, label, maximum=4000):
 
 
 def validate_video_constraints(video):
+    for key, choices, default in (("layout", ("classic", "minimal", "canvas"), "classic"), ("theme", ("light", "dark"), "dark"), ("orientation", ("landscape", "portrait"), "landscape")):
+        if video.get(key, default) not in choices:
+            raise ValueError(f"Invalid video.{key}; expected one of {choices}")
+    for key in ("reset_between_beats", "exit_fade", "style_lock", "fixed_beat_durations"):
+        if key in video and not isinstance(video[key], bool):
+            raise ValueError(f"video.{key} must be boolean")
+    palette = video.get("style_palette", {})
+    if not isinstance(palette, dict):
+        raise ValueError("video.style_palette must be an object")
+    for key, color in palette.items():
+        if not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            raise ValueError(f"video.style_palette.{key} must be a six-digit hex color")
     for key, default in (("narration_max_chars", 140), ("caption_max_chars", 42)):
         value = video.get(key, default)
         if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 4000:
@@ -45,7 +64,7 @@ def validate_snippet(code, extensions=None):
     tree = ast.parse(code)
     prohibited = (ast.Import, ast.ImportFrom, ast.While, ast.With, ast.AsyncWith, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Return, ast.Raise, ast.Try, ast.Global, ast.Nonlocal)
     denied_names = {"open", "exec", "eval", "compile", "getattr", "setattr", "delattr", "globals", "locals", "vars", "input", "breakpoint", "__import__", "Tex", "MathTex", "SVGMobject", "ImageMobject"}
-    allowed_methods = {"play", "wait", "add", "remove", "scene_text", "asset", "extension"}
+    allowed_methods = {"play", "wait", "add", "remove", "scene_text", "scene_paragraph", "sketch_line", "asset", "extension", "style_color", "sketch_shape", "ink_path"}
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self" and node.attr == "extension":
             calls = [call for call in ast.walk(tree) if isinstance(call, ast.Call) and call.func is node]
@@ -64,39 +83,107 @@ def validate_snippet(code, extensions=None):
                 raise ValueError("不能修改对象属性，请使用 Manim 方法")
 
 
-def validate_code(value, count, extensions=None):
+def validate_code(value, count, extensions=None, video=None):
     if not isinstance(value, dict) or not isinstance(value.get("beats"), list) or len(value["beats"]) != count:
         raise ValueError(f"代码必须包含 {count} 个 beats")
     for beat in value["beats"]:
         validate_snippet(beat["code"], extensions)
+        validate_style_snippet(beat["code"], video)
 
 
 STAGES = ["outline", "storyboard", "audio", "assets", "code", "render", "review", "compose"]
 
 
+def review_summary(output, rendered, enabled):
+    sections = {}
+    for section_id, artifact in rendered.items():
+        status = "unverified" if enabled else "disabled"
+        files = sorted(Path(output).glob(f"{section_id}_review_*.json")) if enabled else []
+        for filename in files:
+            feedback = json.loads(filename.read_text(encoding="utf-8"))
+            if feedback.get("reviewed_revision") == artifact["revision"]:
+                status = "issues_found" if feedback["has_issues"] else "passed"
+        sections[section_id] = {"revision": artifact["revision"], "status": status}
+    return {"passed": bool(sections) and all(item["status"] == "passed" for item in sections.values()), "sections": sections}
+
+
 def task_fingerprint(topic, config, materials):
-    payload = {"version": 1, "topic": topic, "config": config, "sources": materials["sources"], "context": materials["context"]}
+    sources = [{key: value for key, value in source.items() if key != "path"} for source in materials["sources"]]
+    payload = {"version": 2, "topic": topic, "config": config, "sources": sources, "context": materials["context"]}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 class VideoPipeline:
-    def __init__(self, topic, config, output, materials=None, pages=None, resume=False, on_event=None, project=None):
+    def __init__(self, topic, config, output, materials=None, pages=None, resume=False, on_event=None, project=None, references=None, planning_gate=None):
+        self.planning_gate = planning_gate
+        self.teaching_research = None
+        from execution import project_lock
+        root = Path(project or output).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        with project_lock(root):
+            self._initialize(topic, config, output, materials, pages, resume, on_event, project, references)
+
+    def _initialize(self, topic, config, output, materials=None, pages=None, resume=False, on_event=None, project=None, references=None):
         self.topic = topic
         self.config = json.loads(json.dumps(config))
+        style_id = self.config.get("style", "default")
+        style_id = style_id.get("id", "default") if isinstance(style_id, dict) else style_id
+        from execution import validate_output
+        project_root = Path(project or output).resolve()
+        snapshot_file = validate_output(project_root, project_root / "prompts/style.json")
+        self.style_snapshot = None
+        if resume and snapshot_file.is_file():
+            snapshot = json.loads(snapshot_file.read_text(encoding="utf-8"))
+            if (not isinstance(snapshot, dict) or snapshot.get("id") != style_id
+                    or not isinstance(snapshot.get("video"), dict)
+                    or not isinstance(snapshot.get("policy"), str)
+                    or not isinstance(snapshot.get("stages", {}), dict)
+                    or any(not isinstance(value, str) for value in snapshot.get("stages", {}).values())):
+                raise ValueError("Invalid project style snapshot or mismatched style id")
+            self.style_snapshot = snapshot
+            if snapshot.get("content_hash") and snapshot_hash(snapshot) != snapshot["content_hash"]:
+                raise ValueError("Project style snapshot content hash mismatch")
+            self.style = StylePackage(style_id, snapshot.get("title", style_id),
+                                      snapshot.get("description", ""), snapshot["video"],
+                                      snapshot_file.parent, snapshot["policy"], snapshot.get("version", "1.0.0"), snapshot.get("technical", {}), snapshot.get("sources", []))
+        else:
+            self.style = load_style(style_id)
+        self.config = style_video_config(self.config, self.style)
         validate_video_constraints(self.config["video"])
         self.on_event = on_event or (lambda event: None)
         self.active_stage = None
         self.output = Path(output).resolve()
+        project_root = Path(project or output).resolve()
+        if not self.output.is_relative_to(project_root):
+            raise ValueError("Output must be inside the current video project")
         self.output.mkdir(parents=True, exist_ok=True)
         self.project = initialize_project(project or self.output, topic, self.config)
         self.config["course"] = json.loads((self.project / "prompts/requirements.json").read_text(encoding="utf-8-sig"))
+        self.config["task"] = self.config["course"]
         if not isinstance(self.config["course"], dict):
             raise ValueError("项目 requirements.json 必须是课程要求 JSON 对象")
         self.templates = read_templates(self.project)
         self.extensions = read_extensions(self.project / "code/runtime")
-        inputs_hash = input_fingerprint(self.project)
         material_paths = snapshot_materials(self.project, materials or [], resume)
-        self.materials = load_materials(material_paths, topic, config["materials"], pages)
+        reference_paths = snapshot_materials(self.project, references or [], resume, "input/references")
+        if not resume:
+            for filename in material_paths + reference_paths:
+                source = Path(filename)
+                if source.suffix.lower() == ".svg":
+                    data = source.read_bytes()
+                    identifier = hashlib.sha256(data).hexdigest()[:12]
+                    archive_resource(self.project, f"reference_{identifier}.svg", data)
+        style_file = self.project / "prompts/style.json"
+        if not resume:
+            self.style_snapshot = self.style.snapshot()
+            save_json(style_file, self.style_snapshot)
+        inputs_hash = input_fingerprint(self.project)
+        self.materials = load_materials(material_paths, topic, self.config["materials"], pages, reference_paths, self.output / "reference_transcripts")
+        self.reference_images = [Path(item["path"]) for item in self.materials.get("visual_inputs", []) if item["type"] == "image"]
+        for item in self.materials.get("visual_inputs", []):
+            if item["type"] == "video":
+                frames_directory = self.output / "reference_frames" / item["sha256"]
+                self.reference_images.extend(sample_frames(Path(item["path"]), frames_directory, 3))
         self.request_directory = self.output / "requests"
         self.request_directory.mkdir(exist_ok=True)
         self.request_serial = max((int(file.name.split("-", 1)[0]) for file in self.request_directory.glob("*.txt") if file.name.split("-", 1)[0].isdigit()), default=0)
@@ -118,7 +205,9 @@ class VideoPipeline:
                 previous_config = {**public, "vision": existing.get("config", {}).get("vision", {})}
                 vision_changed = task_fingerprint(topic, previous_config, self.materials) == existing["fingerprint"]
                 if not vision_changed:
-                    raise ValueError("模型/教材/配置与缓存不一致，请使用新输出目录，避免复用过期教案/配音")
+                    raise ValueError("模型/素材/配置与缓存不一致，请使用新输出目录，避免复用过期分镜/配音")
+            self.relocate_caches(existing)
+            if vision_changed:
                 for stale_review in (self.output / "reviewed.json", *self.output.glob("*_review_*.json")):
                     stale_review.unlink(missing_ok=True)
         self.manifest = {"fingerprint": fingerprint, "inputs_fingerprint": inputs_hash, "project_directory": str(self.project), "topic": topic, "config": public, "status": "started", "stages": {}}
@@ -127,17 +216,96 @@ class VideoPipeline:
         if vision_changed:
             for stage in ("review", "compose"):
                 self.manifest["stages"].pop(stage, None)
+        self.manifest["output_directory"] = str(self.output)
         save_json(manifest, self.manifest)
         save_json(self.output / "materials.json", self.materials)
         if self.materials["omitted_chunks"]:
-            print(f"教材超过上下文预算，已选取相关片段；省略 {self.materials['omitted_chunks']} 段，详见 materials.json")
+            print(f"素材超过上下文预算，已选取相关片段；省略 {self.materials['omitted_chunks']} 段，详见 materials.json")
+
+    def relocate_caches(self, existing):
+        old_root_text = existing.get("project_directory") or str(self.project)
+        path_type = PureWindowsPath if PureWindowsPath(old_root_text).drive else PurePosixPath
+        old_root = path_type(old_root_text)
+        if not old_root.is_absolute():
+            raise ValueError("Cached project root must be absolute")
+        try:
+            output_relative = self.output.relative_to(self.project)
+        except ValueError as failure:
+            raise ValueError("Resume output must be inside the video project") from failure
+        old_output = path_type(existing.get("output_directory") or str(old_root / output_relative.as_posix()))
+        if existing.get("output") and not existing.get("output_directory"):
+            old_output = path_type(existing["output"]).parent
+        old_output.relative_to(old_root)
+
+        def relocate_path(value):
+            if not isinstance(value, str) or not value:
+                raise ValueError("Invalid cached media path")
+            cached = path_type(value)
+            if ".." in cached.parts:
+                raise ValueError("Cached media path contains traversal")
+            if cached.is_absolute():
+                for previous, current in ((old_output, self.output), (old_root, self.project)):
+                    try:
+                        relative = cached.relative_to(previous)
+                    except ValueError:
+                        continue
+                    target = current.joinpath(*relative.parts).resolve()
+                    break
+                else:
+                    raise ValueError("Cached media path is outside the archived project")
+            else:
+                if cached.drive or cached.root:
+                    raise ValueError("Invalid rooted cached media path")
+                target = self.project.joinpath(*cached.parts).resolve()
+            if not target.is_relative_to(self.project):
+                raise ValueError("Cached media path escapes the video project")
+            return str(target)
+
+        def relocate(value):
+            if isinstance(value, list):
+                return [relocate(item) for item in value]
+            if not isinstance(value, dict):
+                return value
+            result = {}
+            for key, item in value.items():
+                if key in ("audio", "video", "path") and isinstance(item, str):
+                    result[key] = relocate_path(item)
+                elif key == "images" and isinstance(item, list):
+                    result[key] = [relocate_path(image) for image in item]
+                else:
+                    result[key] = relocate(item)
+            return result
+
+        updates = []
+        invalid_render = False
+        for filename in sorted(self.output.rglob("*.json")):
+            relative = filename.relative_to(self.output)
+            if len(relative.parts) > 1 and relative.parts[0] not in {
+                    "audio", "assets", "requests", "reference_transcripts", "reference_frames"}:
+                continue
+            if filename == self.output / "manifest.json":
+                continue
+            if not filename.resolve().is_relative_to(self.output):
+                raise ValueError("Cache file escapes the output directory")
+            original = json.loads(filename.read_text(encoding="utf-8"))
+            relocated = relocate(original)
+            if filename.name in ("rendered.json", "reviewed.json"):
+                relocated = {key: item for key, item in relocated.items() if Path(item["video"]).is_file()}
+                invalid_render = invalid_render or len(relocated) != len(original)
+            if original != relocated:
+                updates.append((filename, relocated))
+        for filename, relocated in updates:
+            save_json(filename, relocated)
+        if invalid_render:
+            (self.output / "reviewed.json").unlink(missing_ok=True)
 
     def record_request(self, role, prompt, images):
         self.request_serial += 1
         name = f"{self.request_serial:04}-{self.active_stage or 'prepare'}-{role}"
         (self.request_directory / (name + ".txt")).write_text(sanitize_error(prompt, self.config), encoding="utf-8")
         settings = self.config[role]
-        save_json(self.request_directory / (name + ".json"), {"role": role, "stage": self.active_stage, "model": settings["model"], "protocol": settings["protocol"], "images": [str(file) for file in images]})
+        snapshot = self.style_snapshot or self.style.snapshot()
+        save_json(self.request_directory / (name + ".json"), {"role": role, "stage": self.active_stage, "model": settings["model"], "protocol": settings["protocol"], "max_tokens": settings.get("max_tokens"), "style_id": snapshot["id"], "style_version": snapshot.get("version"), "style_hash": snapshot.get("content_hash"), "images": [str(file) for file in images]})
 
     def cached_json(self, filename, prompt, validator):
         file = self.output / filename
@@ -145,18 +313,32 @@ class VideoPipeline:
             result = json.loads(file.read_text(encoding="utf-8"))
             validator(result)
             return result
-        result = self.text.json(prompt, validator)
+        images = self.reference_images if filename in ("outline.json", "storyboard.json") else []
+        result = self.text.json(prompt, validator, images=images)
         save_json(file, result)
         return result
 
     def prompt(self, stage, original):
-        course = self.config.get("course", {})
+        snapshot = getattr(self, "style_snapshot", None)
+        policy = (snapshot.get("stages", {}).get(stage, self.style.policy)
+                  if snapshot is not None else style_stage_policy(self.style, stage))
+        original += "\n视频画面风格：\n" + policy
+        technical = snapshot.get("technical", {}) if snapshot is not None else self.style.technical
+        original += "\n固定公共技术技能：\n" + technical.get(stage, "")
+        original += "\n运行时配置（必须遵守）：" + json.dumps(self.config["video"], ensure_ascii=False)
+        original += "\n用户视频任务：" + self.topic
+        course = self.config.get("task", self.config.get("course", {}))
         if stage == "storyboard":
             video = self.config["video"]
+            original += "\n可设置 lead_in_seconds 为0到30秒的静默读题前置时间；配音和字幕自动延后。video.fixed_beat_durations=true 时 duration_seconds 为该段总时长（含读题），旁白必须在该段内说完。"
+            if video.get("target_duration"):
+                original += f"\n总时长目标 {video['target_duration']} 秒；中文旁白建议不超过 {int(video['target_duration'] * 3.8)} 字，预留动画停顿。可以给每个beat添加正数duration_seconds作为视觉时间权重。"
             original += f"\n本项目每个 beat 的字符上限：narration ≤{video.get('narration_max_chars', 140)}，caption ≤{video.get('caption_max_chars', 42)}。"
         if stage == "code":
             descriptions = {name: entry.get("description", "") for name, entry in self.extensions.items()}
             original += "\n本项目允许的动画扩展（空对象表示无扩展；调用 self.extension(名称字面量, ...)，首个参数自动传入 scene）：" + json.dumps(descriptions, ensure_ascii=False)
+        if stage in ("outline", "storyboard", "code") and getattr(self, "teaching_research", None):
+            original += research_context(self.teaching_research)
         return original + f"\n项目语言：{course.get('language', '中文')}\n创作者课程要求（仍须符合事实和输出格式约束）：{course.get('instructions', '')}\n本阶段补充要求：{course.get('prompts', {}).get(stage, '')}"
 
     def event(self, stage, status, message=""):
@@ -179,6 +361,8 @@ class VideoPipeline:
         if not isinstance(sections, list) or not 1 <= len(sections) <= self.config["video"]["max_sections"]:
             raise ValueError("大纲章节数量超出限制")
         valid_sources = {chunk["source"] for chunk in self.materials["selected_chunks"]}
+        if getattr(self, "teaching_research", None):
+            valid_sources.update(source["id"] for source in self.teaching_research["sources"])
         for index, section in enumerate(sections, 1):
             if section["id"] != f"section_{index}":
                 raise ValueError("章节 ID 必须按顺序为 section_1、section_2 等")
@@ -189,9 +373,10 @@ class VideoPipeline:
             for point in section["key_points"]:
                 nonempty(point, "key_point")
             if not isinstance(section["sources"], list) or any(source not in valid_sources for source in section["sources"]):
-                raise ValueError("来源必须是教材中的完整标签，不能虚构引用")
-            if valid_sources and not section["sources"]:
-                raise ValueError("提供教材时，每章必须标注至少一个教材来源")
+                raise ValueError("sources must use these exact strings (without square brackets): " + json.dumps(sorted(valid_sources), ensure_ascii=False))
+
+        if getattr(self, "teaching_research", None):
+            validate_step_coverage(outline, self.teaching_research["plan"], "outline")
 
     def validate_storyboard(self, storyboard, outline):
         sections = storyboard["sections"]
@@ -207,15 +392,36 @@ class VideoPipeline:
                 nonempty(beat["narration"], "narration", self.config["video"].get("narration_max_chars", 140))
                 nonempty(beat["caption"], "caption", self.config["video"].get("caption_max_chars", 42))
                 nonempty(beat["visual"], "visual")
+                lead = beat.get("lead_in_seconds", 0)
+                if isinstance(lead, bool) or not isinstance(lead, (int, float)) or not math.isfinite(lead) or not 0 <= lead <= 30:
+                    raise ValueError("lead_in_seconds must be a finite number in [0,30]")
+                planned = beat.get("duration_seconds", 1)
+                if isinstance(planned, bool) or not isinstance(planned, (int, float)) or not math.isfinite(planned) or not 0 < planned <= 120:
+                    raise ValueError("duration_seconds must be a finite visual timing weight in (0,120]")
             keywords = section.get("icon_keywords", [])
             if not isinstance(keywords, list) or len(keywords) > 4 or any(not isinstance(term, str) or not re.fullmatch(r"[a-zA-Z0-9 -]{1,50}", term) for term in keywords):
                 raise ValueError("icon_keywords 必须是最多 4 个简单英文关键词")
 
+        if getattr(self, "teaching_research", None):
+            validate_step_coverage(storyboard, self.teaching_research["plan"], "storyboard")
+
+    def research_teaching(self):
+        settings = self.config.get("teaching_research", {})
+        if enabled_for(self.topic, settings):
+            self.teaching_research = prepare_research(self.topic, self.materials, settings, self.output / "teaching_research", self.text)
+
+    def planning_checkpoint(self, stage, document):
+        if getattr(self, "planning_gate", None):
+            self.planning_gate(stage, document)
+
     def prepare(self):
-        print("[1/6] 生成教材约束的教学大纲")
+        print("[1/6] 根据视频需求和参考素材生成大纲")
+        self.research_teaching()
         outline = self.cached_json("outline.json", self.prompt("outline", outline_prompt(self.topic, self.materials, self.config["video"], self.templates)), self.validate_outline)
+        self.planning_checkpoint("outline", outline)
         print("[2/6] 生成逐句旁白和动画分镜")
         storyboard = self.cached_json("storyboard.json", self.prompt("storyboard", storyboard_prompt(outline, self.materials, self.config["video"], self.templates)), lambda value: self.validate_storyboard(value, outline))
+        self.planning_checkpoint("storyboard", storyboard)
         for warning in outline["warnings"]:
             print(f"内容核验提示: {warning}")
         return outline, storyboard
@@ -225,29 +431,37 @@ class VideoPipeline:
         for index, beat in enumerate(section["beats"]):
             audio = self.output / "audio" / f"{section['id']}_{index + 1:02}.wav"
             metadata = audio.with_suffix(".json")
-            audio_fingerprint = hashlib.sha256(json.dumps({"text": beat["narration"], "tts": public_config(self.config["tts"]), "subtitle_version": 2}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-            if audio.is_file() and metadata.is_file():
-                info = json.loads(metadata.read_text(encoding="utf-8"))
-                if info.get("fingerprint") != audio_fingerprint:
-                    info = self.narrator.synthesize(beat["narration"], audio)
-                    info["fingerprint"] = audio_fingerprint
-                    save_json(metadata, info)
-                probe(audio)
-            else:
+            lead = float(beat.get("lead_in_seconds", 0))
+            audio_fingerprint = hashlib.sha256(json.dumps({"text": beat["narration"], "tts": public_config(self.config["tts"]), "subtitle_version": 3, "lead_in_seconds": lead}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            info = json.loads(metadata.read_text(encoding="utf-8")) if audio.is_file() and metadata.is_file() else {}
+            if info.get("fingerprint") != audio_fingerprint:
                 info = self.narrator.synthesize(beat["narration"], audio)
+                if lead:
+                    padded = audio.with_suffix(".lead.wav")
+                    prepend_audio_silence(audio, padded, lead)
+                    padded.replace(audio)
+                    info["subtitles"] = [{**cue, "start": cue["start"] + lead, "end": cue["end"] + lead} for cue in info.get("subtitles", [])]
+                info["lead_in_seconds"] = lead
                 info["fingerprint"] = audio_fingerprint
                 save_json(metadata, info)
+            info["duration"] = probe(audio)["duration"]
+            save_json(metadata, info)
             beat["duration"] = math.ceil((info["duration"] + self.config["video"]["pause_seconds"]) * fps) / fps
+            if self.config["video"].get("fixed_beat_durations"):
+                beat["duration"] = max(beat["duration"], float(beat.get("duration_seconds", beat["duration"])))
             beat["audio"] = str(audio)
             beat["subtitles"] = info.get("subtitles", [])
         return section
 
     def assemble_code(self, section, snippets):
-        validate_code(snippets, len(section["beats"]), self.extensions)
+        validate_code(snippets, len(section["beats"]), self.extensions, self.config["video"])
         definitions = "from manim import *\nimport numpy as np\nimport math\nfrom scene_runtime import NarratedScene\n\n"
-        style = {key: self.config["video"].get(key) for key in ("theme", "orientation", "brand")}
-        background = "#F7FAF7" if style["theme"] == "light" else "#0b1020"
+        style = {key: self.config["video"].get(key) for key in ("theme", "orientation", "brand", "style_palette", "layout", "reset_between_beats", "exit_fade", "template_id", "style_lock")}
+        background = self.config["video"].get("style_palette", {}).get("background", "#F7FAF7" if style["theme"] == "light" else "#0b1020")
         definitions += f"config.background_color = {background!r}\n"
+        if style.get("style_lock"):
+            definitions += "from series_style import apply_style_defaults\n"
+            definitions += f"apply_style_defaults({style!r}, {self.config['video']['font']!r})\n"
         if style["orientation"] == "portrait":
             definitions += "config.frame_width = 8\nconfig.frame_height = 14.2222222222\n"
         definitions += "\nclass LessonScene(NarratedScene):\n"
@@ -265,25 +479,24 @@ class VideoPipeline:
         return definitions
 
     def render(self, section, snippets, revision):
-        directory = self.output / section["id"] / f"revision_{revision}"
+        from execution import validate_output
+        directory = validate_output(self.project, self.output / section["id"] / f"revision_{revision}")
         directory.mkdir(parents=True, exist_ok=True)
-        script = directory / "scene.py"
+        script = validate_output(self.project, directory / "scene.py")
         script.write_text(self.assemble_code(section, snippets), encoding="utf-8")
-        source_directory = self.project / "code/manim"
+        source_directory = validate_output(self.project, self.project / "code/manim")
         source_directory.mkdir(parents=True, exist_ok=True)
-        (source_directory / f"{section['id']}_revision_{revision}.py").write_text(script.read_text(encoding="utf-8"), encoding="utf-8")
+        validate_output(self.project, source_directory / f"{section['id']}_revision_{revision}.py").write_text(script.read_text(encoding="utf-8"), encoding="utf-8")
         quality = {"low": "-ql", "medium": "-qm", "high": "-qh"}[self.config["video"]["quality"]]
         arguments = [sys.executable, "-m", "manim", quality, "--renderer", "cairo", "--fps", str(self.config["video"]["fps"]), "--disable_caching", "--media_dir", str(directory / "media"), "--output_file", "lesson", str(script), "LessonScene"]
         if self.config["video"].get("orientation") == "portrait":
             arguments[3:3] = ["--resolution", "1080,1920" if self.config["video"]["quality"] == "high" else "540,960"]
-        environment = os.environ.copy()
-        environment["PYTHONPATH"] = str(self.project / "code/runtime")
-        environment["PYTHONSAFEPATH"] = "1"
         try:
-            output = run_command(arguments, timeout=self.config["video"]["render_timeout"], cwd=directory, env=environment)
-            (directory / "render.log").write_text(output, encoding="utf-8")
+            from execution import render_command
+            output = render_command(arguments, self.project, directory, self.config.get("execution", {}), self.config["video"]["render_timeout"])
+            validate_output(self.project, directory / "render.log").write_text(output, encoding="utf-8")
         except RuntimeError as failure:
-            (directory / "render.log").write_text(str(failure), encoding="utf-8")
+            validate_output(self.project, directory / "render.log").write_text(str(failure), encoding="utf-8")
             raise
         matches = list((directory / "media").rglob("lesson.mp4"))
         if len(matches) != 1:
@@ -304,17 +517,24 @@ class VideoPipeline:
                 if attempt == self.config["video"]["fix_attempts"]:
                     raise RuntimeError(f"{section['id']} 渲染修复耗尽，完整日志已保存") from failure
                 print(f"修复 {section['id']}，第 {attempt + 1} 次")
-                snippets = self.text.json(self.prompt("code", code_prompt(section, snippets, str(failure)[-8000:], self.templates, self.config["video"])), lambda value: validate_code(value, len(section["beats"]), self.extensions))
+                snippets = self.text.json(self.prompt("code", code_prompt(section, snippets, str(failure)[-8000:], self.templates, self.config["video"])), lambda value: validate_code(value, len(section["beats"]), self.extensions, self.config["video"]))
 
     def run(self, plan_only=False, stop_after="compose"):
+        from execution import project_lock
+        with project_lock(self.project):
+            return self._run(plan_only, stop_after)
+
+    def _run(self, plan_only=False, stop_after="compose"):
         try:
             if plan_only:
                 stop_after = "storyboard"
             if stop_after not in STAGES:
                 raise ValueError("无效流水线阶段")
-            self.event("outline", "running", "生成教材约束的教学大纲")
+            self.event("outline", "running", "根据视频需求和参考素材生成大纲")
+            self.research_teaching()
             outline = self.cached_json("outline.json", self.prompt("outline", outline_prompt(self.topic, self.materials, self.config["video"], self.templates)), self.validate_outline)
             self.event("outline", "complete")
+            self.planning_checkpoint("outline", outline)
             for warning in outline["warnings"]:
                 print(f"内容核验提示: {warning}")
             if stop_after == "outline":
@@ -322,12 +542,43 @@ class VideoPipeline:
             self.event("storyboard", "running", "生成逐句旁白和动画分镜")
             storyboard = self.cached_json("storyboard.json", self.prompt("storyboard", storyboard_prompt(outline, self.materials, self.config["video"], self.templates)), lambda value: self.validate_storyboard(value, outline))
             self.event("storyboard", "complete")
+            self.planning_checkpoint("storyboard", storyboard)
             if stop_after == "storyboard":
                 return self.output / "storyboard.json"
             self.event("audio", "running", "合成旁白并测量真实时长")
-            for section in storyboard["sections"]:
-                section = self.prepare_audio(section)
-                save_json(self.output / f"{section['id']}_timing.json", section)
+            target = self.config["video"].get("target_duration")
+            if target is not None and (isinstance(target, bool) or not isinstance(target, (int, float)) or not math.isfinite(target) or target <= 0):
+                raise ValueError("video.target_duration must be positive and finite")
+            for audio_round in range(3):
+                for section in storyboard["sections"]:
+                    section = self.prepare_audio(section)
+                    save_json(self.output / f"{section['id']}_timing.json", section)
+                spoken = sum(beat["duration"] for section in storyboard["sections"] for beat in section["beats"])
+                if target is None or spoken <= target + 1 / self.config["video"]["fps"]:
+                    break
+                if audio_round == 2:
+                    raise ValueError("Narration still exceeds target after two automatic revisions; no speech was truncated")
+                self.event("audio", "running", "正在自动精简旁白，以适应目标时长")
+                correction = f"\n上一版真实配音加停顿为 {spoken:.2f} 秒，目标 {target} 秒。必须保留事实与推理，缩短旁白到原字符数的 {target / spoken * .85:.0%}。不要改变章节ID。返回完整分镜JSON。"
+                storyboard = self.text.json(self.prompt("storyboard", storyboard_prompt(outline, self.materials, self.config["video"], self.templates)) + correction,
+                    lambda value: self.validate_storyboard(value, outline))
+                save_json(self.output / "storyboard.json", storyboard)
+                self.planning_checkpoint("storyboard", storyboard)
+            if target is not None:
+                if isinstance(target, bool) or not isinstance(target, (int, float)) or not math.isfinite(target) or target <= 0:
+                    raise ValueError("video.target_duration must be positive and finite")
+                beats = [beat for section in storyboard["sections"] for beat in section["beats"]]
+                actual = sum(beat["duration"] for beat in beats)
+                if actual > target + 1 / self.config["video"]["fps"]:
+                    raise ValueError("Real narration exceeds target duration; shorten narration or change TTS speed, never truncate speech")
+                # Spread spare time across the planned visual beats, rather than freezing the final frame.
+                slack = max(0, target - actual)
+                weights = [max(0.1, float(beat.get("duration_seconds", 1))) for beat in beats]
+                for beat, weight in zip(beats, weights):
+                    beat["duration"] += math.floor(slack * weight / sum(weights) * self.config["video"]["fps"]) / self.config["video"]["fps"]
+                beats[-1]["duration"] += max(0, target - sum(beat["duration"] for beat in beats))
+                for section in storyboard["sections"]:
+                    save_json(self.output / f"{section['id']}_timing.json", section)
             save_json(self.output / "timing.json", storyboard)
             self.event("audio", "complete")
             if stop_after == "audio":
@@ -337,7 +588,10 @@ class VideoPipeline:
             if asset_file.exists():
                 storyboard = json.loads(asset_file.read_text(encoding="utf-8"))
             else:
-                owned_assets = local_assets(self.project) if self.config["assets"]["enabled"] else []
+                owned_assets = local_assets(self.project)
+                for index, item in enumerate(self.materials.get("visual_inputs", [])):
+                    if item["type"] == "image":
+                        owned_assets.append({"key": "reference_image_" + str(index), "path": item["path"], "credit": "User material: " + item["name"], "license": "Verify user material rights before publishing", "source": "local"})
                 self.assets.records.extend(owned_assets)
                 for section in storyboard["sections"]:
                     section["assets"] = owned_assets[:self.config["assets"]["max_per_section"]]
@@ -352,7 +606,7 @@ class VideoPipeline:
             self.event("code", "running", "生成配音时长驱动的 Manim 代码")
             codes = {}
             for section in storyboard["sections"]:
-                codes[section["id"]] = self.cached_json(f"{section['id']}_code.json", self.prompt("code", code_prompt(section, templates=self.templates, settings=self.config["video"])), lambda value: validate_code(value, len(section["beats"]), self.extensions))
+                codes[section["id"]] = self.cached_json(f"{section['id']}_code.json", self.prompt("code", code_prompt(section, templates=self.templates, settings=self.config["video"])), lambda value: validate_code(value, len(section["beats"]), self.extensions, self.config["video"]))
             self.event("code", "complete")
             if stop_after == "code":
                 return self.output
@@ -381,13 +635,15 @@ class VideoPipeline:
                     video = Path(rendered[section_id]["video"])
                     snippets = codes[section_id]
                     revision = rendered[section_id]["revision"]
-                    for round_number in range(self.config["vision"]["rounds"]):
-                        frames = sample_frames(video, self.output / section_id / f"review_{round_number}", self.config["vision"]["frames"])
+                    for round_number in range(self.config["vision"]["rounds"] + 1):
+                        from media import sample_beat_frames
+                        frames = sample_beat_frames(video, self.output / section_id / f"review_{round_number}", section["beats"], self.config["vision"]["frames"])
                         feedback = self.vision.json(self.prompt("review", review_prompt(section, self.templates)), self.validate_feedback, images=frames)
+                        feedback["reviewed_revision"] = revision
                         save_json(self.output / f"{section_id}_review_{round_number}.json", feedback)
-                        if not feedback["has_issues"]:
+                        if not feedback["has_issues"] or round_number == self.config["vision"]["rounds"]:
                             break
-                        revised = self.text.json(self.prompt("code", code_prompt(section, snippets, json.dumps(feedback, ensure_ascii=False), self.templates, self.config["video"])), lambda value: validate_code(value, len(section["beats"]), self.extensions))
+                        revised = self.text.json(self.prompt("code", code_prompt(section, snippets, json.dumps(feedback, ensure_ascii=False), self.templates, self.config["video"])), lambda value: validate_code(value, len(section["beats"]), self.extensions, self.config["video"]))
                         video, snippets, revision = self.render_with_repairs(section, revised, revision + 1)
                     rendered[section_id] = {"video": str(video), "revision": revision}
                     save_json(self.output / f"{section_id}_code.json", snippets)
@@ -395,15 +651,22 @@ class VideoPipeline:
             else:
                 save_json(reviewed_file, rendered)
             if self.vision:
-                self.event("review", "complete", "抽样帧评审完成；请人工检查最终动态视频")
+                summary = review_summary(self.output, rendered, True)
+                save_json(self.output / "review_status.json", summary)
+                self.manifest["visual_review"] = summary
+                self.event("review", "complete" if summary["passed"] else "unverified", "Final revision passed sampled review; dynamic acceptance still required" if summary["passed"] else "Final revision not approved or not re-reviewed after repair")
             if stop_after == "review":
                 return reviewed_file
+            if self.vision and self.config["vision"].get("require_pass") and not summary["passed"]:
+                raise ValueError("Visual review still found issues; final video withheld. See review_status.json and review feedback.")
             self.event("compose", "running", "合并动画、配音和字幕")
             all_beats, videos, audios = [], [], []
             for section in storyboard["sections"]:
                 videos.append(Path(rendered[section["id"]]["video"]))
                 for index, beat in enumerate(section["beats"]):
                     padded = self.output / "audio" / f"{section['id']}_{index + 1:02}_padded.wav"
+                    if probe(Path(beat["audio"]))["duration"] > beat["duration"] + 0.001:
+                        raise ValueError("Audio exceeds allocated beat duration; refusing to truncate speech")
                     fit_audio(Path(beat["audio"]), padded, beat["duration"])
                     audios.append(padded)
                     all_beats.append(beat)
@@ -412,7 +675,14 @@ class VideoPipeline:
             duration = write_subtitles(all_beats, self.output / "subtitles.srt")
             save_json(self.output / "timeline.json", all_beats)
             final = self.output / "final.mp4"
-            mux(self.output / "animation.mp4", self.output / "narration.wav", self.output / "subtitles.srt", final, duration, self.config["video"].get("subtitle_language", "zho"))
+            video, audio = self.output / "animation.mp4", self.output / "narration.wav"
+            montage_settings = self.config.get("montage", {})
+            if montage_settings:
+                from montage import compose_media
+                video, audio = compose_media(video, audio, self.output / "montage.mp4",
+                                            self.output / "mixed.wav", duration,
+                                            montage_settings, self.materials["sources"])
+            mux(video, audio, self.output / "subtitles.srt", final, duration, self.config["video"].get("subtitle_language", "zho"))
             details = probe(final)
             if not {"video", "audio", "subtitle"}.issubset({stream["type"] for stream in details["streams"]}):
                 raise RuntimeError("最终视频缺少视频、音频或字幕轨")
@@ -421,6 +691,10 @@ class VideoPipeline:
             self.manifest.update({"status": "complete", "media": details, "output": str(final)})
             self.event("compose", "complete")
             return final
+        except PlanningPending as pending:
+            self.manifest["status"] = "awaiting_review"
+            self.event(pending.stage, "awaiting_review", str(pending))
+            raise
         except Exception as failure:
             self.manifest["status"] = "failed"
             if self.active_stage:
@@ -429,6 +703,7 @@ class VideoPipeline:
         finally:
             if self.manifest["status"] == "started":
                 self.manifest["status"] = "ready"
+            self.manifest["production_model"] = getattr(self.text, "settings", self.config["text"])["model"]
             self.manifest["usage"] = {"text": self.text.usage, "vision": self.vision.usage if self.vision else {}}
             save_json(self.output / "manifest.json", self.manifest)
 

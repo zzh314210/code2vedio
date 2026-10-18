@@ -1,0 +1,13 @@
+{
+  "tts": {
+    "provider": "gpt_sovits",
+    "url": "http://127.0.0.1:9880/tts",
+    "model": "gpt-sovits-v2ProPlus",
+    "voice": "male-teacher",
+    "ref_audio_path": "D:/Code2VideoCache/tts/voices/male-teacher.wav",
+    "prompt_text": "同学们，我们先观察数量怎样变化，再一步一步把条件对应起来。",
+    "speed": 1.0,
+    "seed": 37,
+    "timeout": 900
+  }
+}

@@ -1,5 +1,8 @@
 # Code2Video: 通过代码生成视频
 
+> **Frame 工作台：** 独立运行的视频流水线、素材检索、大纲/分镜人工与 AI 审核、本地 CPU 配音。安装与配置见 [STUDIO.md](STUDIO.md)。仓库不包含本地成片、生产项目、题库、密钥和模型权重。
+
+
 > **Windows 部署请使用文末的「Code2Video 2026 Windows 流程」**。原研究项目的部署说明仅作历史参考，不适用于当前命令行入口。
 
 <p align="right">
@@ -215,58 +218,86 @@ src/
 如果您喜欢我们的项目，欢迎在 GitHub 上给我们一个 Star ⭐ 以获取最新动态！
 [![Star History Chart](https://api.star-history.com/svg?repos=showlab/Code2Video&type=Date)](https://star-history.com/#showlab/Code2Video&Date)
 
-## Code2Video 2026 Windows 流程
+## 通用 CLI 视频流水线
 
-空白项目的提示词与品牌保持中立，不携带专题扩展。`--project-pack examples\video_project\civil_service` 注入考公要求；牛吃草包位于 `examples/video_project/cow_grass`。可信扩展在项目 `code/runtime/extensions.json` 显式注册，以 `self.extension("名称", ...)` 调用；渲染不导入仓库 `src/`，上传 Python 只归档、不自动执行。
-
-历史研究代码与提示词已隔离到 `legacy/`，前文旧安装与基准命令仅作历史资料；当前操作以本节、`SOP.md` 和 `examples/video_project/README.md` 为准。
-
-本仓库当前推荐使用 Windows 原生流程：独立 `.venv`、清华 PyPI 镜像、Manim + FFmpeg 本地渲染，以及本地 Web 面板管理课程。
+当前同时提供 CLI 与 Frame Web 工作台，启动方式见 [STUDIO.md](STUDIO.md)。前面的研究演示说明为历史资料；当前任务不要求教材或 Markdown。每次生成在 `video_projects/` 下创建一个独立视频项目，不再将任务拆到 examples 和 projects。
 
 ### 快速开始
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\scripts\setup_windows.ps1
-.\scripts\start_web.ps1
+.\.venv\Scripts\python.exe src\agent.py --list-styles
+.\.venv\Scripts\python.exe src\agent.py --list-tts
+.\.venv\Scripts\python.exe src\agent.py --prompt "介绍一款新产品" --style presentation --reference "素材/产品.png" --project "video_projects/product-demo" --plan-only
+.\.venv\Scripts\python.exe src\agent.py --project "video_projects/product-demo" --resume --allow-generated-code
 ```
 
-浏览器打开 `http://127.0.0.1:8787`，在面板中配置文本模型、独立视觉审计模型、TTS、图标源，上传 Markdown/PDF 教材后创建课程。命令行方式：
+先运行 `scripts/setup_windows.ps1` 安装环境。`--plan-only` 生成大纲和分镜；`--stop-after` 支持 outline/storyboard/audio/assets/code/render/review/compose。生成 Python 在本机执行，AST 校验不是沙箱，应在无敏感文件的隔离账户中运行。
+
+### 输入和媒体支持
+
+`--task-file` 接收 JSON 的 prompt、style、materials、references、config、tts、review；路径相对于任务 JSON，CLI 参数优先。`--material`、`--reference` 可重复，`--topic` 保留为兼容入口。text 与 vision 分别配置模型/API，支持 Responses 或 Chat Completions；发送图像的规划模型必须支持视觉输入。
+
+- 文本、Markdown、JSON、CSV、代码/YAML 和文本 PDF 可提取上下文；扫描 PDF 没有自动 OCR，保留文件与说明。其他文件归档并记录类型、大小及 SHA-256，不声称都能理解。
+- 图像送入 outline/storyboard 规划请求，并可通过运行时 `self.asset(key)` 返回的图像对象加入画面；使用资产清单键，不直接读取任意外部路径。SVG 图标源及授权本地 SVG 保留，文件归档不等于自动注册可用图标。
+- 视频抽取三个参考帧用于规划；抽样不是完整时序理解，也不会自动选择剪辑点。
+- 音频默认只归档；启用 `materials.transcription.enabled` 并配置其 api_key、base_url、model 后，可通过 OpenAI-compatible 转录接口加入文本上下文和缓存。须人工核对转录；该接口独立于 TTS，真实第三方 ASR 尚未验证。
+
+### 独立项目与秘密保护
+
+`input/materials`、`input/references` 保存输入；`prompts` 保存模板、需求和风格快照；`code/runtime` 保存可信运行时；`output` 保存大纲、分镜、配音、请求记录、日志、字幕和 `final.mp4`。`task.json` 保存需求及项目内输入路径，`settings.json` 脱敏。`prompts/style.json` 保存风格元数据、video 默认值、policy 和四阶段指导；续跑优先读取有效项目快照，即使全局包已修改或删除。缺少阶段项时回退快照 policy；快照格式和风格 id 必须合法且匹配。全局更新不会自动升级已有项目。修改输入或风格后不要盲目复用旧缓存。
+
+密钥使用环境变量/`.env` 或忽略的私有配置，公开示例只放 `${ENV_NAME}` 占位符，不把密钥写入任务、风格包或提交。脱敏配置不是完整隐私保证：原始素材、提示词、请求及转录可能含敏感信息，公开项目目录前应审查。已在聊天中暴露的密钥应轮换。
+
+### 风格与 TTS
+
+Available application styles: `default`, `clean_education`, `3b1b_inspired`, `infographic`, `presentation`, `handdrawn`, `editorial_motion`. Stage-specific guidance falls back to policy.txt when absent; project snapshots bind all four stages to the selected version. handdrawn adds native sketch strokes; editorial_motion adds geometric motion and kinetic typography constraints. These are pipeline policies for external LLMs, not terminal-agent skills. See [style package documentation](style_skills/README.md).
+
+TTS 默认仍为 edge；另有 openai/http/none/qwen_audio。应用可用 `narration.register_tts_provider(name, factory)` 注册；独立 CLI 可发现安装在当前 Python 环境中的 `code2video.tts` entry-point。工厂接收 settings，实例提供 `synthesize(text, destination)`，写入流水线可用音频并返回包含 duration 的字典，可附带 subtitles。`--list-tts` 列出供应商，插件执行 Python，必须可信。
+
+Qwen 使用公开预设 `config.qwen-tts.example.json`，密钥由 `C2V_QWEN_TTS_API_KEY` 提供。provider 为 `qwen_audio`，从 base_url 的同源主机调用 native 路由 `/api/v1/services/audio/tts/SpeechSynthesizer`，不是 `/audio/speech`（本次端点返回 404）。返回音频 URL 下载不附带 API 授权头。
+
+已实测合成成功：`qwen-audio-3.1-tts-next`、`qwen-audio-3.0-tts-plus`、`qwen-audio-3.0-tts-flash`，使用 voice `longanhuan_v3.6`。`qwen-audio-3.1-tts-flash` 本次 HTTP 400、引擎错误 411，不能视为可用；支持情况依赖账号与服务状态。next 在未显式设置 text_prompt 时暂以合成文本填入，其语义仍需按供应商文档核对。
 
 ```powershell
-.\.venv\Scripts\python.exe src\agent.py --config config.local.json `
-  --project "projects\lesson-001" --topic "资料分析：增长率" `
-  --project-pack "examples\video_project\civil_service" --material examples\增长率.md `
-  --allow-generated-code --feedback
+.\.venv\Scripts\python.exe src\agent.py --config config.qwen-tts.example.json --tts-model qwen-audio-3.0-tts-flash --check-tts
 ```
 
-模型名完全可配置：将示例配置中的 `YOUR_MODEL_ID` 改为服务商实际支持的 ID，不使用旧版硬编码列表。本机接入的是第三方服务提供的 `gpt-6.1-sol`，不代表 OpenAI 官方接口提供同名模型。模型网关支持 OpenAI Responses 与 OpenAI-compatible Chat Completions，`base_url` 填协议根地址（通常到 `/v1`）。
+### 确定性 montage
 
-设置 `vision.inherit_text: true` 时，视觉评审使用与文本模型相同的地址、密钥、模型和协议。仅更改视觉配置后可用 `--resume` 保留大纲、分镜、配音和渲染，只重新评审和合成；知识点、教材及其他配置变化仍需新输出目录。
+任务配置示例（素材路径相对于任务文件）：
 
-### 外部服务
+```json
+{
+  "prompt": "介绍产品，结合现场素材",
+  "style": "presentation",
+  "materials": [
+    "footage.mp4",
+    "music.wav"
+  ],
+  "references": [],
+  "config": {
+    "montage": {
+      "clips": [
+        {
+          "source": "footage.mp4",
+          "start": 0.5,
+          "duration": 0.8,
+          "source_start": 0
+        }
+      ],
+      "music": {
+        "source": "music.wav",
+        "volume": 0.15
+      }
+    }
+  }
+}
+```
 
-- 文本/规划/分镜/Manim/调试：一个可用的 OpenAI 或兼容 API。
-- 视觉审计：可单独配置一个多模态 OpenAI/兼容 API；不启用也能生成画面。
-- TTS：Edge TTS 无 API Key 但需要联网；也支持 OpenAI 兼容语音和自定义 HTTP TTS。
-- 图标：IconVaultKit、Infyicon、`graphics-api-remotion` 可在 `config.local.json` 中分别启用；每个源风格不同，素材记录会保存来源和许可提示。
-- Manim 和 FFmpeg 在本机运行，不需要视频生成 API。
+`task.config.montage` 是用户确定性配置，不由模型自动挑选素材或剪辑点。clips/music 的 source 必须对应 task.materials 或 references 已归档素材的唯一 name；不要放两个同名文件，也不要使用未归档路径绕过匹配。clip 的 start 是成片覆盖起点，duration 是覆盖时长，source_start 是素材读取起点，单位为秒。片段全画面等比缩放、黑边补齐，覆盖对应生成动画时间段；保留生成旁白和字幕，不混入片段原声。music 循环混入生成音轨，volume 是混音音量系数。未覆盖部分继续使用生成动画。
 
-### 安全与限制
+OpenMontage（AGPLv3）仅提供独立项目、分阶段产物与供应商解耦等架构启发；不复制其源码，不宣称包含完整自动素材搜索、模型选剪辑或全部 OpenMontage 功能。
 
-不要把 API Key 写入仓库或命令历史；使用 `.env` 环境变量引用。模型生成的 Python 代码必须在隔离账户或明确允许后执行，`--allow-generated-code` 不是沙箱。PDF 支持文本型 PDF，扫描件/OCR 暂未内置。教材文本、视觉审计帧和 TTS 文本会发送到你配置的外部服务。
+### 检查与验收
 
-同一课程可以从 Web 面板继续、重跑或编辑大纲/分镜/代码生成新版本；流水线阶段为：大纲 → 分镜 → TTS → 素材 → Manim 代码 → 渲染 → 视觉审计 → 合成。
-
-`src/run_agent.sh` 与 `src/run_agent_single.sh` 仅保留为旧环境兼容包装器；Windows 请使用 `scripts\run_windows.ps1` 或 Web 面板。
-
-## 独立视频项目与提示词
-
-新视频默认保存到 `projects/日期-知识点--ID/`，每个项目独立保存完整阶段提示词、课程要求、教材原件副本、例题参考、SVG 素材及绘制源码、Manim 源码、配音、渲染日志和最终视频。模型凭证留在根目录，项目配置快照脱敏；旧本地测试项目及产物已清理，可复用示例包保留。
-
-- Web：创建课程时可上传本视频完整模板、SVG/绘图源码和教材；任务卡支持项目路径显示、全部文件浏览、提示词编辑与独立新版本。
-- CLI：`--project` 指定独立项目，`--project-pack` 注入完整项目包，`--course-file` 提供本视频要求，`--prompts-dir` 提供完整模板，`--resource` 归档本视频参考资源。未指定项目目录时自动创建，原配置续跑使用项目内教材副本。
-- `projects/` 默认不提交 Git；根目录 `examples/video_project` 是无密钥的课程输入示例，不是生产任务目录。
-- 创建课程时保存公共默认配置，不把该视频的 `course` 要求写回全局。
-
-完整流程、目录约定和全部提示词入口见 `SOP.md` 第6、7、13节。
+使用当前虚拟环境运行 `scripts/cli_smoke.py`、`scripts/qwen_tts_smoke.py` 和 `scripts/smoke.py`；montage 可用 `scripts/montage_smoke.py` 单独检查。模拟 API 检查不证明真实供应商、ASR、Edge 网络或在线图标服务可用。自动视觉审核发生在 montage 合成之前，只覆盖生成动画的抽样帧，不覆盖剪辑替换画面或新增音乐，不能作为最终 montage 验收。发布前必须人工完整观看、试听 final.mp4，检查覆盖片段衔接、黑边/裁切、音乐循环及音量、旁白与字幕同步，并核对事实和素材许可。

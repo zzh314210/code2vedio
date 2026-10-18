@@ -1,0 +1,62 @@
+{
+  "style": "studio_noir",
+  "text": {
+    "protocol": "chat_completions",
+    "base_url": "https://llm-jioe96u6f6snbp4q.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    "api_key": "${C2V_TEXT_API_KEY}",
+    "model": "kimi-k3",
+    "max_tokens": 24000,
+    "token_parameter": "max_tokens",
+    "stream": true,
+    "timeout": 180,
+    "extra_body": {
+      "enable_thinking": false
+    },
+    "fallback_models": [
+      "deepseek-v4-flash-0731",
+      "deepseek-v4.1-flash"
+    ]
+  },
+  "vision": {
+    "enabled": true,
+    "inherit_text": false,
+    "protocol": "chat_completions",
+    "base_url": "https://llm-jioe96u6f6snbp4q.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    "api_key": "${C2V_VISION_API_KEY}",
+    "model": "deepseek-v4.1-flash",
+    "token_parameter": "max_tokens",
+    "frames": 12,
+    "rounds": 2,
+    "max_tokens": 6000,
+    "timeout": 120,
+    "extra_body": {
+      "enable_thinking": false
+    },
+    "require_pass": true,
+    "fallback_models": [
+      "qwen3.7-flash",
+      "qwen3.8-flash"
+    ]
+  },
+  "tts": {
+    "provider": "qwen_audio",
+    "base_url": "https://llm-jioe96u6f6snbp4q.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    "api_key": "${C2V_TEXT_API_KEY}",
+    "model": "qwen-audio-3.0-tts-plus",
+    "voice": "longanhuan_v3.6",
+    "speed": 1.1,
+    "timeout": 120
+  },
+  "video": {
+    "quality": "high",
+    "fps": 30,
+    "target_duration": 30,
+    "max_sections": 1,
+    "max_beats": 6,
+    "pause_seconds": 0.12,
+    "render_timeout": 900
+  },
+  "assets": {
+    "enabled": false
+  }
+}

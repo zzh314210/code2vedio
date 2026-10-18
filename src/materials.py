@@ -1,8 +1,15 @@
+import csv
 import hashlib
+import json
 import re
 from pathlib import Path
 
 from pypdf import PdfReader
+
+from task_schema import infer_reference_type
+
+
+TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".json", ".csv", ".py", ".yaml", ".yml"}
 
 
 def page_numbers(specification, count):
@@ -20,37 +27,76 @@ def page_numbers(specification, count):
     return sorted(selected)
 
 
-def load_materials(filenames, topic, settings, pages=None):
+def _read_text(file):
+    suffix = file.suffix.lower()
+    if suffix == ".json":
+        value = json.loads(file.read_text(encoding="utf-8-sig"))
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    if suffix == ".csv":
+        with file.open("r", encoding="utf-8-sig", newline="") as stream:
+            return "\n".join(" | ".join(row) for row in csv.reader(stream))
+    return file.read_text(encoding="utf-8-sig")
+
+
+def _source_record(file, role):
+    data = file.read_bytes()
+    return {
+        "name": file.name,
+        "path": str(file),
+        "role": role,
+        "type": infer_reference_type(file),
+        "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+
+
+def load_materials(filenames, prompt, settings, pages=None, references=None, cache_directory=None):
     chunks = []
     sources = []
-    for filename in filenames:
+    visual_inputs = []
+    entries = [(filename, "material") for filename in filenames]
+    entries.extend((filename, "reference") for filename in (references or []))
+    for filename, role in entries:
         file = Path(filename).expanduser().resolve()
         if not file.is_file():
-            raise ValueError(f"教材不存在: {file}")
+            raise ValueError(f"输入素材不存在: {file}")
         if file.stat().st_size > float(settings.get("max_file_mb", 50)) * 1024 * 1024:
-            raise ValueError(f"教材过大: {file.name}")
-        digest = hashlib.sha256(file.read_bytes()).hexdigest()
-        sources.append({"name": file.name, "sha256": digest})
-        if file.suffix.lower() == ".pdf":
+            raise ValueError(f"输入素材过大: {file.name}")
+        record = _source_record(file, role)
+        sources.append(record)
+        suffix = file.suffix.lower()
+        if suffix == ".pdf":
             reader = PdfReader(file)
             if reader.is_encrypted and reader.decrypt("") == 0:
                 raise ValueError(f"PDF 已加密，请先解密: {file.name}")
+            extracted = 0
             for page in page_numbers(pages, len(reader.pages)):
                 text = (reader.pages[page].extract_text() or "").strip()
-                if not text:
-                    raise ValueError(f"{file.name} 第 {page + 1} 页没有可提取文本（扫描件需先 OCR 或转换 Markdown）")
-                chunks.extend(split_text(text, f"{file.name}#p{page + 1}"))
-        elif file.suffix.lower() in (".md", ".markdown"):
-            text = file.read_text(encoding="utf-8-sig").strip()
-            if not text:
-                raise ValueError(f"教材为空: {file.name}")
-            chunks.extend(split_text(text, file.name))
+                if text:
+                    chunks.extend(split_text(text, f"{file.name}#p{page + 1}"))
+                    extracted += 1
+            if not extracted:
+                record["note"] = "PDF 未提取到文本；已保留为外部参考元数据"
+        elif suffix in TEXT_SUFFIXES:
+            text = _read_text(file).strip()
+            if text:
+                chunks.extend(split_text(text, file.name))
+            else:
+                record["note"] = "文本文件为空"
+        elif record["type"] == "audio" and settings.get("transcription", {}).get("enabled", False):
+            from audio_references import transcribe_reference
+            text = transcribe_reference(file, settings["transcription"], cache_directory)
+            chunks.extend(split_text(text, file.name + "#transcript"))
+            record["note"] = "Audio reference transcribed; verify transcript before publishing"
         else:
-            raise ValueError("教材仅支持 .md、.markdown、.pdf")
+            record["note"] = "二进制素材不直接发送给文本模型；可供后续视觉、剪辑或人工参考"
+        if record["type"] in {"image", "svg", "video", "audio"}:
+            visual_inputs.append(record)
+
     budget = int(settings.get("max_chars", 24000))
     if budget < 1000:
         raise ValueError("materials.max_chars 至少为 1000")
-    terms = set(re.findall(r"[A-Za-z0-9]{2,}|[\u4e00-\u9fff]{2}", topic))
+    terms = set(re.findall(r"[A-Za-z0-9]{2,}|[\u4e00-\u9fff]{2}", prompt))
     if sum(len(item["text"]) + len(item["source"]) + 10 for item in chunks) > budget:
         ranked = sorted(enumerate(chunks), key=lambda pair: -sum(pair[1]["text"].count(term) for term in terms))
         chosen = []
@@ -64,7 +110,19 @@ def load_materials(filenames, topic, settings, pages=None):
     else:
         selected = chunks
     context = "\n\n".join(f"[{chunk['source']}]\n{chunk['text']}" for chunk in selected)
-    return {"sources": sources, "selected_chunks": selected, "omitted_chunks": len(chunks) - len(selected), "context": context}
+    if visual_inputs:
+        inventory = "\n".join(
+            f"- {item['name']} ({item['type']}, {item['role']}, {item['size']} bytes)"
+            for item in visual_inputs
+        )
+        context += ("\n\n" if context else "") + "<external_media_inventory>\n" + inventory + "\n</external_media_inventory>"
+    return {
+        "sources": sources,
+        "selected_chunks": selected,
+        "omitted_chunks": len(chunks) - len(selected),
+        "visual_inputs": visual_inputs,
+        "context": context,
+    }
 
 
 def split_text(text, source):

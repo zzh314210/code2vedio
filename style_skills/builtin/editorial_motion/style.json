@@ -1,0 +1,33 @@
+{
+  "id": "editorial_motion",
+  "title": "Editorial motion",
+  "description": "Bold geometric motion poster with plum stage, mint and apricot accents, kinetic typography and full-frame scene transitions.",
+  "version": "1.0.0",
+  "video": {
+    "theme": "dark",
+    "layout": "canvas",
+    "orientation": "landscape",
+    "brand": "",
+    "style_palette": {
+      "background": "#211C35",
+      "foreground": "#FAF7F2",
+      "primary": "#A4F4CF",
+      "emphasis": "#FFB789",
+      "secondary": "#B8AFCE"
+    },
+    "reset_between_beats": true,
+    "exit_fade": false
+  },
+  "sources": [
+    {
+      "name": "Motion Canvas",
+      "source": "https://github.com/motion-canvas/motion-canvas",
+      "integration": "Motion design and narration synchronization reference, native Manim adaptation; no engine code copied"
+    },
+    {
+      "name": "frontend-design",
+      "source": "https://github.com/anthropics/skills/tree/main/skills/frontend-design",
+      "integration": "Application-level visual hierarchy principles; archived upstream reference"
+    }
+  ]
+}

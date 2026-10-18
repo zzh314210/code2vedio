@@ -1,0 +1,1 @@
+const rough=require('roughjs/bundled/rough.cjs.js'); const fs=require('fs');const g=rough.generator();const s=g.rectangle(-50,-50,100,100,{seed:37,roughness:.7,bowing:.5,strokeWidth:1.5});fs.writeFileSync('../src/rough_square.json',JSON.stringify({generator:'roughjs',version:'4.6.6',seed:37,paths:s.sets.filter(s=>s.type==='path').map(s=>s.ops)}));

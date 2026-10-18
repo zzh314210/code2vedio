@@ -1,7 +1,9 @@
 import asyncio
 import base64
+import importlib.metadata
 import re
 import time
+from urllib.parse import urlsplit, urlunsplit
 
 import edge_tts
 import httpx
@@ -23,12 +25,109 @@ def fill_template(value, variables):
     return value
 
 
+class TTSProvider:
+    """Extension contract for project-specific speech providers."""
+
+    name = "custom"
+
+    def __init__(self, settings):
+        self.settings = settings
+
+    def synthesize(self, text, destination):
+        raise NotImplementedError
+
+
+TTS_PROVIDERS = {}
+
+
+class QwenAudioProvider(TTSProvider):
+    name = "qwen_audio"
+
+    def __init__(self, settings):
+        super().__init__(settings)
+        validate_endpoint(settings.get("base_url"))
+        if not settings.get("api_key") or not settings.get("model") or not settings.get("voice"):
+            raise ValueError("Qwen Audio TTS requires api_key, model and voice")
+        parsed = urlsplit(settings["base_url"])
+        self.url = urlunsplit((parsed.scheme, parsed.netloc, "/api/v1/services/audio/tts/SpeechSynthesizer", "", ""))
+
+    def synthesize(self, text, destination):
+        payload = {"model": self.settings["model"], "input": {"text": text, "voice": self.settings["voice"], "format": "wav", "sample_rate": 24000}}
+        if self.settings.get("text_prompt"):
+            payload["input"]["text_prompt"] = self.settings["text_prompt"]
+        elif self.settings["model"].endswith("-tts-next"):
+            payload["input"]["text_prompt"] = text
+        with httpx.Client(timeout=float(self.settings.get("timeout", 120))) as client:
+            response = client.post(self.url, headers={"Authorization": "Bearer " + self.settings["api_key"]}, json=payload)
+            if not response.is_success:
+                from configuration import sanitize_error
+                raise ValueError("Qwen Audio TTS HTTP " + str(response.status_code) + ": " + sanitize_error(response.text[:1000], self.settings))
+            audio = response.json().get("output", {}).get("audio", {})
+            if audio.get("data"):
+                data = base64.b64decode(audio["data"], validate=True)
+            elif audio.get("url"):
+                url = audio["url"]
+                parsed = urlsplit(url)
+                if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+                    raise ValueError("Invalid Qwen audio download URL")
+                download = client.get(url)
+                if not download.is_success:
+                    raise ValueError("Qwen audio download HTTP " + str(download.status_code))
+                data = download.content
+            else:
+                raise ValueError("Qwen Audio TTS returned no audio")
+        if not data:
+            raise ValueError("Qwen Audio TTS returned empty audio")
+        temporary = destination.with_suffix(".qwen.raw.wav")
+        try:
+            temporary.write_bytes(data)
+            duration = pcm_audio(temporary, destination)
+            speed = float(self.settings.get("speed", 1.0))
+            if speed != 1:
+                if not .8 <= speed <= 1.25: raise ValueError("Speech speed must be .8..1.25")
+                from media import run_command, ffmpeg_binary, probe
+                adjusted = destination.with_suffix(".paced.wav")
+                run_command([ffmpeg_binary(), "-y", "-i", str(destination), "-af", f"atempo={speed}", str(adjusted)])
+                adjusted.replace(destination)
+                duration = probe(destination)["duration"]
+        finally:
+            temporary.unlink(missing_ok=True)
+        return {"duration": duration, "provider": self.name, "model": self.settings["model"], "silent": False, "subtitles": Narrator.fallback_subtitles(text, duration)}
+
+
+from local_tts import GPTSoVITSProvider
+TTS_PROVIDERS["qwen_audio"] = QwenAudioProvider
+TTS_PROVIDERS["gpt_sovits"] = GPTSoVITSProvider
+
+
+def register_tts_provider(name, factory):
+    if not isinstance(name, str) or not name.strip() or not callable(factory):
+        raise ValueError("TTS provider registration requires a name and callable factory")
+    TTS_PROVIDERS[name.strip()] = factory
+
+
+def list_tts_providers():
+    installed = importlib.metadata.entry_points(group="code2video.tts")
+    return sorted({"edge", "openai", "http", "none", *TTS_PROVIDERS, *(entry.name for entry in installed)})
+
+
 class Narrator:
     def __init__(self, settings):
         self.settings = settings
         self.provider = settings.get("provider", "edge")
+        self.plugin = None
         if self.provider not in ("edge", "openai", "http", "none"):
-            raise ValueError("tts.provider 必须是 edge / openai / http / none")
+            factory = TTS_PROVIDERS.get(self.provider)
+            if factory is None:
+                entries = [entry for entry in importlib.metadata.entry_points(group="code2video.tts") if entry.name == self.provider]
+                if len(entries) > 1:
+                    raise ValueError(f"Multiple installed TTS plugins named {self.provider}")
+                if entries:
+                    factory = entries[0].load()
+            if factory is None:
+                raise ValueError(f"Unknown tts.provider {self.provider}; available: {', '.join(list_tts_providers())}")
+            self.plugin = factory(settings)
+            return
         if self.provider == "openai":
             validate_endpoint(settings.get("base_url"))
             if not settings.get("api_key") or not settings.get("model"):
@@ -41,6 +140,8 @@ class Narrator:
 
     def synthesize(self, text, destination):
         destination.parent.mkdir(parents=True, exist_ok=True)
+        if self.plugin is not None:
+            return self.plugin.synthesize(text, destination)
         if self.provider == "none":
             duration = max(2.0, len(text) / 4.5)
             silence(destination, duration)

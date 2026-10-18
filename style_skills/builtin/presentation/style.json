@@ -1,0 +1,36 @@
+{
+  "id": "presentation",
+  "title": "presentation",
+  "description": "适合产品介绍、方案讲解和演示汇报的舞台式构图。",
+  "video": {
+    "theme": "dark",
+    "orientation": "landscape",
+    "brand": "Presentation",
+    "style_palette": {
+      "background": "#111827",
+      "primary": "#38BDF8",
+      "emphasis": "#F97316",
+      "secondary": "#CBD5E1",
+      "foreground": "#F8FAFC"
+    },
+    "layout": "canvas",
+    "reset_between_beats": true,
+    "exit_fade": true
+  },
+  "version": "1.1.0",
+  "sources": [
+    {
+      "name": "manim-composer",
+      "source": "https://github.com/adithya-s-k/manim_skill",
+      "license": "MIT",
+      "adaptation": "style_skills/technical",
+      "license_file": "style_skills/technical/LICENSE.upstream.txt"
+    },
+    {
+      "name": "manimce-best-practices",
+      "source": "https://github.com/adithya-s-k/manim_skill",
+      "license": "MIT",
+      "adaptation": "style_skills/technical"
+    }
+  ]
+}

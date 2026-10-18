@@ -1,0 +1,5 @@
+纸面背景、深色文字、蓝色主色和赭色强调。采用手绘轮廓、简洁标注和充足留白；可用 self.sketch_line 绘制任意线条或箭头。手绘扰动只影响外观，不能改变数据或几何真值。
+这是通用视觉规范，适用于任意课题和系列。内容、图形、对象数量与讲解结构全部由当前用户任务和素材决定。每期自由生成适合内容的 Manim 场景；无需调用预制课题组件，也不限制为卡片或步骤列表。保持同一视频与同一系列的字体、配色、描边和运动语言一致。
+背景、标题、进度和字幕由运行时统一绘制，不重复添加。文字用 self.scene_text；图形使用 Manim 的几何、曲线、坐标、连接和变换自由构建。颜色使用 self.style_color("primary"|"emphasis"|"secondary"|"foreground"|"muted"|"panel"|"line"|"background") 或配置内的十六进制颜色，不能另选颜色或字体。主图安全区按代码提示中的 layout_bounds 执行。转场优先使用 smooth，进入/强调约0.4至0.8秒，其余时间用于解释内容变化，不为装饰占用讲解时间。
+
+已预加载官方 Rough.js 与 Perfect Freehand，动态绘制任意课题。可调用 self.sketch_shape("rectangle"|"ellipse", width=..., height=..., center=[x,y,0], color=self.style_color("primary"), fill=self.style_color("panel"))；或 self.sketch_shape("polygon"|"curve"|"line"|"arrow", points=[[x,y],...], color=...)。line/arrow恰好两个不同端点，polygon至少三个点。返回普通 Manim VGroup，可 Create、Transform、移动、缩放。self.ink_path([[x,y],...], width=.05, color=...) 使用 Perfect Freehand 生成笔迹，也可提供第三维压力0到1。坐标按当前安全区，曲线由当前任务的数据与关系决定，不存在预设内容。

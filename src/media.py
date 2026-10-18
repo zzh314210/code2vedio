@@ -45,6 +45,13 @@ def silence(destination, duration):
     run_command([ffmpeg_binary(), "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", str(duration), "-c:a", "pcm_s16le", str(destination)])
 
 
+def prepend_audio_silence(source, destination, seconds):
+    milliseconds = round(float(seconds) * 1000)
+    if not 0 <= milliseconds <= 30000:
+        raise ValueError("Audio lead-in must be between 0 and 30 seconds")
+    run_command([ffmpeg_binary(), "-y", "-i", str(source), "-af", f"adelay={milliseconds}:all=1", "-c:a", "pcm_s16le", str(destination)])
+
+
 def fit_audio(source, destination, duration):
     run_command([ffmpeg_binary(), "-y", "-i", str(source), "-af", "apad", "-t", str(duration), "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", str(destination)])
 
@@ -57,9 +64,19 @@ def concat(files, destination, audio=False):
 
 
 def mux(video, audio, subtitles, destination, duration, subtitle_language="zho"):
+    with av.open(str(video)) as container:
+        stream = next(s for s in container.streams if s.type == "video")
+        frame_rate = float(stream.base_rate or stream.average_rate)
+    if not math.isfinite(frame_rate) or frame_rate <= 0:
+        raise ValueError("Invalid final video frame rate")
+    frame_count = max(1, round(duration * frame_rate))
     run_command([
         ffmpeg_binary(), "-y", "-i", str(video), "-i", str(audio), "-i", str(subtitles),
-        "-map", "0:v:0", "-map", "1:a:0", "-map", "2:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+        "-map", "0:v:0", "-map", "1:a:0", "-map", "2:0",
+        "-vf", f"fps={frame_rate},tpad=stop_mode=clone:stop_duration=1", "-frames:v", str(frame_count),
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k",
+        "-af", "loudnorm=I=-16:TP=-1.5:LRA=9", "-ar", "48000",
         "-c:s", "mov_text", "-metadata:s:s:0", f"language={subtitle_language}", "-t", str(duration), "-movflags", "+faststart", str(destination),
     ])
 
@@ -103,3 +120,28 @@ def write_subtitles(beats, destination):
         elapsed = end
     destination.write_text("\n".join(blocks), encoding="utf-8")
     return elapsed
+
+
+def sample_beat_frames(video, directory, beats, count=12):
+    """Sample every semantic beat, including the result of its motion."""
+    directory.mkdir(parents=True, exist_ok=True)
+    # Two per beat is the quality floor; avoid missing a short beat entirely.
+    per_beat = max(2, math.ceil(count / len(beats)))
+    positions = []
+    cursor = 0.0
+    for beat in beats:
+        lead = float(beat.get('lead_in_seconds', 0))
+        if lead > 0:
+            positions.append(cursor + lead * .5)
+        positions.extend(cursor + beat['duration'] * fraction for fraction in
+                         [0.2 + 0.65 * i / max(1, per_beat - 1) for i in range(per_beat)])
+        cursor += beat['duration']
+    result = []
+    for index, position in enumerate(positions):
+        file = directory / f'frame_{index:03}.jpg'
+        run_command([ffmpeg_binary(), '-y', '-ss', str(position), '-i', str(video),
+                     '-frames:v', '1', '-vf', 'scale=1280:-2', str(file)])
+        if not file.is_file(): raise ValueError('Review frame extraction failed')
+        result.append(file)
+    (directory / 'timestamps.json').write_text(__import__('json').dumps(positions), encoding='utf8')
+    return result

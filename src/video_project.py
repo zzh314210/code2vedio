@@ -12,7 +12,8 @@ from lesson_prompts import TEMPLATES
 from project_extensions import read_extensions
 
 
-PROJECTS = ROOT / "projects"
+VIDEO_PROJECTS = ROOT / "video_projects"
+PROJECTS = VIDEO_PROJECTS
 PROMPT_NAMES = tuple(TEMPLATES)
 RESOURCE_SUFFIXES = {".svg", ".py", ".md", ".markdown", ".json", ".txt", ".png", ".jpg"}
 
@@ -35,6 +36,9 @@ def new_project_path(topic, directory=PROJECTS, identifier=None):
 
 def write_json(filename, value):
     filename = Path(filename)
+    boundary = filename.parent.resolve()
+    contained(boundary, filename)
+    contained(boundary, filename.with_suffix(filename.suffix + ".tmp"))
     filename.parent.mkdir(parents=True, exist_ok=True)
     temporary = filename.with_suffix(filename.suffix + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -66,16 +70,15 @@ def project_pack_config(source):
 def apply_project_pack(source, destination):
     source, destination = Path(source).expanduser().resolve(), Path(destination).resolve()
     project_pack_config(source)
-    for directory in ("prompts", "materials", "examples", "code/runtime/extensions"):
+    mapping = {"prompts": "prompts", "materials": "input/materials", "examples": "input/references", "input/materials": "input/materials", "input/references": "input/references", "code/runtime/extensions": "code/runtime/extensions"}
+    for directory, destination_directory in mapping.items():
         for file in sorted((source / directory).rglob("*")):
             if not file.is_file() or "__pycache__" in file.parts:
                 continue
             contained(source, file)
             if directory == "prompts" and (file.parent != source / "prompts" or file.name not in {name + ".txt" for name in PROMPT_NAMES}):
                 continue
-            if directory == "materials" and file.suffix.lower() not in {".md", ".markdown", ".pdf"}:
-                continue
-            target = contained(destination, destination / file.relative_to(source))
+            target = contained(destination, destination / destination_directory / file.relative_to(source / directory))
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(file, target)
     manifest = contained(source, source / "code/runtime/extensions.json")
@@ -88,32 +91,58 @@ def apply_project_pack(source, destination):
 def initialize_project(base, topic, config, identifier=None, parent=None):
     base = Path(base).resolve()
     base.mkdir(parents=True, exist_ok=True)
-    for name in ("materials", "examples", "prompts", "code/runtime", "code/svg", "output"):
+    for relative in ("project.json", "task.json", "settings.json", "prompts/requirements.json", "code/runtime/extensions.json"):
+        target = base / relative
+        contained(base, target)
+        contained(base, target.with_suffix(target.suffix + ".tmp"))
+    for name in ("input/materials", "input/references", "input/assets", "prompts", "code/runtime", "code/svg", "generated", "assets", "audio", "render", "review", "requests", "logs", "output"):
         contained(base, base / name).mkdir(parents=True, exist_ok=True)
     metadata = base / "project.json"
     if not metadata.exists():
         identity = re.search(r"--([a-f0-9]{12})$", base.name)
-        write_json(metadata, {"schema_version": 1, "id": identifier or (identity[1] if identity else uuid.uuid4().hex[:12]), "topic": topic, "parent": parent, "created_at": datetime.now().isoformat(timespec="seconds"), "layout": {"materials": "materials", "examples": "examples", "prompts": "prompts", "code": "code", "output": "output"}})
+        write_json(metadata, {"schema_version": 2, "id": identifier or (identity[1] if identity else uuid.uuid4().hex[:12]), "prompt": topic, "parent": parent, "created_at": datetime.now().isoformat(timespec="seconds"), "layout": {"input": "input", "prompts": "prompts", "code": "code", "generated": "generated", "render": "render", "review": "review", "output": "output"}})
     for name, template in TEMPLATES.items():
         target = contained(base, base / "prompts" / (name + ".txt"))
         if not target.exists():
             target.write_text(template, encoding="utf-8")
     requirements = base / "prompts/requirements.json"
     if not requirements.exists():
-        write_json(requirements, config.get("course", {}))
-    for name in ("scene_runtime.py", "project_extensions.py"):
+        write_json(requirements, config.get("task", config.get("course", {})))
+    task_file = base / "task.json"
+    if not task_file.exists():
+        style = config.get("style", "default")
+        style = style.get("id", "default") if isinstance(style, dict) else style
+        write_json(task_file, {"schema_version": 1, "prompt": topic, "style": style, "materials": [], "references": [], "config": {}, "tts": {}, "review": {}})
+    style_id = config.get("style", "default")
+    style_id = style_id.get("id", "default") if isinstance(style_id, dict) else style_id
+    studio_style = style_id in {"studio_noir", "studio_editorial", "studio_sketch"}
+    task = config.get("task", config.get("course", {}))
+    cube_baseline = studio_style and task.get("component_profile") == "cube_baseline"
+    runtime_files = ("scene_runtime.py", "project_extensions.py") + (("series_style.py", "handdrawn_runtime.py", "handdrawn_bridge.cjs") if studio_style else ()) + (("cube_geometry.py", "studio_components.py", "rough_square.json") if cube_baseline else ())
+    for name in runtime_files:
         target = contained(base, base / "code/runtime" / name)
         if not target.exists():
             shutil.copy2(ROOT / "src" / name, target)
+    if studio_style:
+        vendor_source = ROOT / "src/vendor/handdrawn"
+        vendor_target = contained(base, base / "code/runtime/vendor/handdrawn")
+        if not vendor_target.exists():
+            shutil.copytree(vendor_source, vendor_target)
     if not (base / "code/runtime/extensions.json").exists():
-        write_json(base / "code/runtime/extensions.json", {})
+        entries = {
+            "cube_lesson": {"file": "extensions/studio_entry.py", "entrypoint": "cube_lesson", "description": "Exact cube-net lesson: self.extension('cube_lesson', stage=N), N=0 hook,1 all 11 nets in four families,2 question E/D,3 fold exact hinges,4 re-unfold D with 180 degree material rotation,5 answer A (E original top = D original top). Call once per beat, six beats in order. Do not add duplicate labels."},
+            "studio": {"file": "extensions/studio_entry.py", "entrypoint": "studio", "description": "Reusable Manim layout: self.extension('studio', kind='comparison'|'steps', items=['short text',...]). Comparison exactly2 items, steps 1..4."}
+        } if cube_baseline else {}
+        write_json(base / "code/runtime/extensions.json", entries)
+        if cube_baseline:
+            entry = base / "code/runtime/extensions/studio_entry.py"
+            entry.parent.mkdir(exist_ok=True)
+            entry.write_text("from studio_components import cube_lesson, studio\n", encoding="utf-8")
     read_extensions(base / "code/runtime")
     if not (base / "settings.json").exists():
         write_json(base / "settings.json", public_config(config))
     documentation = {
-        "examples/README.md": "# 本视频的例题与参考示例\n\n请在这里保存本课程的例题文档、设计参考和示例代码。需要模型读取的 Markdown/PDF，必须作为教材上传或传入 --material；此目录不会被自动当成模型指令。不要依赖全局 examples 中可变的课程文件。\n",
-        "code/svg/README.md": "# 本视频的 SVG 绘制源码\n\n自绘 SVG 的 Python 源码可通过资源上传或 --resource 归档到这里。上传源码只做归档，不会自动执行。SVG 本体位于 output/assets/local；下载图标的 SVG 本体及来源位于 output/assets 和 ATTRIBUTION.md，下载图标不一定有可提供的生成程序。\n",
-        "README.md": f"# 视频项目：{topic}\n\n本目录是一个独立视频项目。\n\n- project.json：标题、项目 ID 和父版本。\n- settings.json：本项目配置快照，密钥已脱敏，运行时从当前凭证配置恢复。\n- prompts/：公共规则、四阶段完整模板、requirements.json 课程要求。\n- materials/：实际使用的原始 Markdown/PDF 副本。\n- examples/：本课程例题和设计参考。\n- code/runtime/：本项目实际使用的绘图运行代码快照。\n- code/svg/：本项目自绘 SVG 源码（如已提供）。\n- output/：大纲、分镜、音频、素材、Manim 源码、日志、视频和字幕。\n- output/requests/：实际提交给模型的提示词记录（含教材选段）。\n\nWeb 编辑会创建独立新项目版本，旧目录保留。修改提示词、教材或代码后不要续用旧缓存；创建新版本。不要把运行目录直接公开，教材和提示词可能是私有内容。\n",
+        "README.md": f"# 视频项目：{topic}\n\n每个任务拥有独立目录。task.json 保存任务输入，settings.json 保存脱敏配置。input/materials 与 input/references 保存原始素材；prompts 保存完整提示词与风格快照；code/runtime 保存可信运行时代码；output 保存大纲、分镜、音频、渲染、请求记录和最终视频。\n\n输入或风格改变时创建新项目，不复用旧缓存。上传源码仅归档，不自动执行。请勿公开含私有素材的项目目录。\n",
     }
     for relative, text in documentation.items():
         target = contained(base, base / relative)
@@ -135,7 +164,7 @@ def read_templates(base):
 
 def input_fingerprint(base):
     digest = hashlib.sha256()
-    for directory in ("prompts", "examples", "code/runtime", "code/svg"):
+    for directory in ("prompts", "input", "code/runtime", "code/svg", "assets"):
         for file in sorted((Path(base) / directory).rglob("*")):
             if file.is_file() and "__pycache__" not in file.parts:
                 contained(base, file)
@@ -146,7 +175,7 @@ def input_fingerprint(base):
     return digest.hexdigest()
 
 
-def snapshot_materials(base, filenames, resume=False):
+def snapshot_materials(base, filenames, resume=False, directory="input/materials"):
     result, names = [], set()
     for filename in filenames:
         source = Path(filename).expanduser().resolve()
@@ -156,7 +185,10 @@ def snapshot_materials(base, filenames, resume=False):
         if name.casefold() in names:
             raise ValueError("教材文件名重复，请重命名: " + name)
         names.add(name.casefold())
-        target = contained(base, Path(base) / "materials" / name)
+        if name.casefold() == "index.json":
+            raise ValueError("index.json 是输入索引保留名称，请重命名素材")
+        target = contained(base, Path(base) / directory / name)
+        target.parent.mkdir(parents=True, exist_ok=True)
         if source != target:
             if resume and target.exists() and target.read_bytes() != source.read_bytes():
                 raise ValueError("教材已改变，请创建新项目而不是复用缓存")
@@ -164,14 +196,17 @@ def snapshot_materials(base, filenames, resume=False):
                 shutil.copy2(source, target)
         result.append(str(target))
     if resume and not result:
-        index = Path(base) / "materials/index.json"
+        index = Path(base) / directory / "index.json"
         if index.is_file():
             order = json.loads(index.read_text(encoding="utf-8"))["files"]
-            result = [str(contained(base, Path(base) / "materials" / name)) for name in order]
+            result = [str(contained(base, Path(base) / directory / name)) for name in order]
         else:
-            result = [str(contained(base, file)) for file in sorted((Path(base) / "materials").iterdir()) if file.suffix.lower() in (".md", ".markdown", ".pdf")]
+            root = Path(base) / directory
+            if not root.is_dir():
+                root = Path(base) / "materials"
+            result = [str(contained(base, file)) for file in sorted(root.iterdir()) if file.is_file() and file.name != "index.json"]
     if not resume:
-        write_json(Path(base) / "materials/index.json", {"files": [Path(file).name for file in result]})
+        write_json(Path(base) / directory / "index.json", {"files": [Path(file).name for file in result]})
     return result
 
 
@@ -183,11 +218,11 @@ def archive_resource(base, name, data, color="#287D68"):
     if suffix == ".svg":
         from icon_assets import safe_svg
         data = safe_svg(data.decode("utf-8-sig"), color).encode("utf-8")
-        relative = Path("output/assets/local") / name
+        relative = Path("assets/local") / name
     elif suffix == ".py":
         relative = Path("code/svg") / name
     else:
-        relative = Path("examples") / name
+        relative = Path("input/references") / name
     target = contained(base, Path(base) / relative)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(data)
@@ -196,7 +231,7 @@ def archive_resource(base, name, data, color="#287D68"):
 
 def copy_project_inputs(source, destination):
     source, destination = Path(source).resolve(), Path(destination).resolve()
-    for directory in ("prompts", "examples", "code/runtime", "code/svg", "output/assets/local"):
+    for directory in ("prompts", "input", "code/runtime", "code/svg", "assets/local", "output/assets/local"):
         for file in sorted((source / directory).rglob("*")):
             if file.is_file() and "__pycache__" not in file.parts:
                 contained(source, file)
@@ -206,7 +241,9 @@ def copy_project_inputs(source, destination):
 
 
 def local_assets(base):
-    return [{"key": "local_" + file.stem, "path": str(contained(base, file)), "credit": "用户提供素材: " + file.name, "license": "发布前确认用户素材授权", "source": "local"} for file in sorted((Path(base) / "output/assets/local").glob("*.svg"))]
+    roots = [Path(base) / "assets/local", Path(base) / "output/assets/local"]
+    files = [file for root in roots if root.is_dir() for file in sorted(root.glob("*.svg"))]
+    return [{"key": "local_" + file.stem, "path": str(contained(base, file)), "credit": "用户提供素材: " + file.name, "license": "发布前确认用户素材授权", "source": "local"} for file in files]
 
 
 def restore_credentials(snapshot, current):

@@ -1,7 +1,10 @@
 
 # Code2Video: Video Generation via Code
 
-> **Windows deployment:** use the [2026 Windows workflow](#2026-windows-workflow) below. The original research/demo instructions are retained for reference and do not describe the current CLI.
+> **Frame Studio:** standalone web pipeline, source research, editable outline/storyboard reviews and CPU speech integration. See [STUDIO.md](STUDIO.md) for installation and configuration. This source checkout excludes generated videos, production projects, datasets, credentials and model weights.
+
+
+> **Current CLI:** use the [current workflow](#current-cli-workflow) below. Original research/demo instructions are retained as historical reference and do not describe the current application.
 
 <p align="right">
   <b>English</b> | <a href="./README.zh-CN.md">简体中文</a>
@@ -361,41 +364,86 @@ If you find our work useful, please cite:
 If you like our project, please give us a star ⭐ on [GitHub](https://github.com/showlab/Code2Video) for the latest update!
 [![Star History Chart](https://api.star-history.com/svg?repos=showlab/Code2Video&type=Date)](https://star-history.com/#showlab/Code2Video&Date)
 
-## 2026 Windows workflow
+## Current CLI workflow
 
-Blank projects use neutral prompts and branding without domain extensions. Use `--project-pack examples\video_project\civil_service` for civil-service requirements; the cow-grass pack is in `examples/video_project/cow_grass`. Trusted extensions are explicitly registered in project `code/runtime/extensions.json` and invoked via `self.extension("name", ...)`. Rendering does not import repository `src/`; uploaded Python is archived, not automatically executed.
+The application provides both the CLI and the local Frame Web studio (see [STUDIO.md](STUDIO.md)); the research/demo instructions above are historical. Tasks accept general prompts and materials, not just textbooks or Markdown. Each video gets an independent directory under `video_projects/`, rather than splitting inputs across examples and projects.
 
-Historical research code and prompts are isolated under `legacy/`; the earlier setup and benchmark commands are historical reference. Follow this section, `SOP.md`, and `examples/video_project/README.md` for the current workflow.
+### Quick start
 
-Use the native Windows workflow with an isolated `.venv`, the Tsinghua PyPI mirror, local Manim + FFmpeg rendering, and the local Web panel.
-
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\scripts\setup_windows.ps1
-.\scripts\start_web.ps1
-```
-
-Open `http://127.0.0.1:8787`. Configure the text model, optional independent vision auditor, TTS, and icon sources, then upload Markdown/PDF teaching material and create a lesson. CLI example:
+Install using `scripts/setup_windows.ps1`, then run:
 
 ```powershell
-.\.venv\Scripts\python.exe src\agent.py --config config.local.json `
-  --project "projects\lesson-001" --topic "资料分析：增长率" `
-  --project-pack "examples\video_project\civil_service" --material examples\增长率.md `
-  --allow-generated-code --feedback
+.\.venv\Scripts\python.exe src\agent.py --list-styles
+.\.venv\Scripts\python.exe src\agent.py --list-tts
+.\.venv\Scripts\python.exe src\agent.py --prompt "Introduce a product" --style presentation --reference "materials/product.png" --project "video_projects/product-demo" --plan-only
+.\.venv\Scripts\python.exe src\agent.py --project "video_projects/product-demo" --resume --allow-generated-code
 ```
 
-The text model is configurable: replace `YOUR_MODEL_ID` in the example configuration with the provider's actual model ID. The local setup uses the third-party provider's `gpt-6.1-sol` ID; this does not establish that the same ID is available from OpenAI directly. The gateway supports OpenAI Responses and OpenAI-compatible Chat Completions. Set `base_url` to the provider's protocol root (usually ending in `/v1`), not to `/chat/completions`.
+`--plan-only` produces outline and storyboard. `--stop-after` accepts outline/storyboard/audio/assets/code/render/review/compose. Generated Python executes locally: AST validation is not a sandbox. Use an isolated account without sensitive files.
 
-With `vision.inherit_text: true`, visual review uses the same API, key, model and protocol as the text model. Changing only the vision configuration allows `--resume` to reuse planning, audio and rendering while rerunning review and composition. Changes to the topic, material or other configuration still require a new output directory.
+### Inputs and media
 
-Text/lesson planning, vision audit, TTS, and icons are independently configurable. Edge TTS needs no API key but does need network access. Manim and FFmpeg run locally. Text PDFs are supported; scanned/OCR PDFs are not built in. Generated Python is not sandboxed: execute only with `--allow-generated-code` in a suitable local account.
+`--task-file` accepts prompt, style, materials, references, config, tts and review. Input paths are relative to the task JSON; CLI options take precedence. `--material` and `--reference` are repeatable; `--topic` remains a compatibility alias. Configure text and vision APIs separately using Responses or Chat Completions. Planning with images requires an image-capable model.
 
-The Web panel supports resume, rerun, and versioned editing of the outline, storyboard, and generated code. The pipeline is: outline → storyboard → TTS → assets → Manim code → render → vision audit → compose.
+- Text, Markdown, JSON, CSV, code/YAML and text PDFs provide context. Scanned PDFs are retained without automatic OCR. Other files are archived with type, size and SHA-256; archival does not imply semantic understanding.
+- Images are sent to outline/storyboard planning and can appear in generated scenes through the image object returned by `self.asset(key)`. Use authorized inventory keys, not arbitrary paths. SVG icon sources and authorized local SVG remain supported; archival alone does not register an icon.
+- Videos contribute three sampled planning frames, not full temporal understanding or automatic edit selection.
+- Audio is archived by default. Enable `materials.transcription.enabled` and configure its api_key, base_url and model to add cached OpenAI-compatible transcription context. Verify transcripts manually; ASR is separate from TTS and a real third-party ASR endpoint has not been validated.
 
-`src/run_agent.sh` and `src/run_agent_single.sh` are legacy compatibility wrappers. On Windows use `scripts\run_windows.ps1` or the Web panel.
+### Independent projects and secrets
 
-## Independent video projects
+`input/materials` and `input/references` hold inputs; `prompts` stores templates, requirements and style snapshots; `code/runtime` holds the trusted runtime. `output` contains plans, narration, request records, logs, subtitles and `final.mp4`. `task.json` records requirements and project input paths; `settings.json` is redacted. `prompts/style.json` stores style metadata, video defaults, policy and stage guidance. Resume prefers a valid project snapshot, even if the global package changed or was removed; absent stage entries fall back to the snapshot policy. The style id and snapshot structure must match. Global updates do not automatically upgrade existing projects. Do not blindly reuse caches after changing inputs or styles.
 
-New videos are stored in `projects/date-topic--id/`. Each project owns its full prompt templates, course requirements, original material copies, examples, SVG assets and supplied drawing sources, generated Manim Python, runtime source snapshots, narration, render logs, and final output. Credentials stay in the application configuration; project settings are redacted. Old local test projects and outputs have been removed; reusable example packs remain.
+Use environment variables, `.env` or ignored private configuration for credentials. Public presets contain placeholders such as `${ENV_NAME}` only; never put keys in tasks, style packages or commits. Redaction is not a complete privacy guarantee: inputs, prompts, requests and transcripts may be confidential. Inspect project folders before sharing and rotate credentials exposed in chat.
 
-The Web panel supports project file browsing, prompt editing, resource uploads, and independent revisions. CLI inputs include `--project`, `--project-pack`, `--course-file`, `--prompts-dir`, and repeatable `--resource`. Projects are Git-ignored; `examples/video_project` contains credential-free input examples. See `SOP.md` sections 6, 7, and 13 for the complete Windows workflow.
+### Application styles and TTS
+
+Built-in styles are default, clean_education, 3b1b_inspired, infographic and presentation. Each has original outline/storyboard/code/review guidance; explicit user video settings override style defaults. These are pipeline instructions for third-party LLMs, not Codex skills. Downloaded upstream materials are research-only. See [style package provenance](style_skills/README.md).
+
+Edge remains the default. Other providers include openai/http/none/qwen_audio. Applications can call `narration.register_tts_provider(name, factory)`; the standalone CLI discovers installed Python `code2video.tts` entry-points. The factory receives settings; the instance implements `synthesize(text, destination)`, writes compatible audio and returns a dictionary with duration and optional subtitles. `--list-tts` lists providers. Install trusted plugins only: they execute Python.
+
+Qwen uses `config.qwen-tts.example.json` with `C2V_QWEN_TTS_API_KEY`. The `qwen_audio` provider calls `/api/v1/services/audio/tts/SpeechSynthesizer` on the configured base_url origin, not `/audio/speech` (404 on the tested endpoint). Returned audio URLs are downloaded without the API Authorization header. Real synthesis succeeded with `qwen-audio-3.1-tts-next`, `qwen-audio-3.0-tts-plus` and `qwen-audio-3.0-tts-flash`, using voice `longanhuan_v3.6`. `qwen-audio-3.1-tts-flash` failed with HTTP 400 / engine error 411; model listing is not proof of availability. For next, absent an explicit text_prompt, the adapter currently uses the spoken text; confirm that parameter meaning with the provider.
+
+```powershell
+.\.venv\Scripts\python.exe src\agent.py --config config.qwen-tts.example.json --tts-model qwen-audio-3.0-tts-flash --check-tts
+```
+
+### Deterministic montage
+
+Task example (paths relative to the task file):
+
+```json
+{
+  "prompt": "Introduce a product with footage",
+  "style": "presentation",
+  "materials": [
+    "footage.mp4",
+    "music.wav"
+  ],
+  "references": [],
+  "config": {
+    "montage": {
+      "clips": [
+        {
+          "source": "footage.mp4",
+          "start": 0.5,
+          "duration": 0.8,
+          "source_start": 0
+        }
+      ],
+      "music": {
+        "source": "music.wav",
+        "volume": 0.15
+      }
+    }
+  }
+}
+```
+
+`task.config.montage` is user-authored, deterministic configuration, not model-selected editing. Each source must uniquely match the name of an archived task.materials or references entry. Avoid duplicate basenames; unarchived paths are not a shortcut. start is the destination timeline start, duration the replacement length, and source_start the source offset, all in seconds. Clips replace generated animation intervals with full-frame, aspect-preserving footage and black padding. Generated narration and subtitles remain; clip audio is not mixed in. Music loops into the generated audio with the specified volume coefficient. Uncovered intervals retain generated animation.
+
+OpenMontage is AGPLv3. Only architectural ideas such as independent projects, stage artifacts and provider separation are referenced; its source code is not copied. This is not the full OpenMontage product, automated footage search or model-selected editing.
+
+### Validation
+
+Run `scripts/cli_smoke.py`, `scripts/qwen_tts_smoke.py` and `scripts/smoke.py` using the project virtual environment; `scripts/montage_smoke.py` checks montage separately. Mock API tests do not validate real providers, ASR, Edge network access or online icon services. Automatic visual review samples generated animation frames before montage composition. It does not review replacement footage or added music, and cannot certify the final montage. Watch and listen to the entire final export manually, checking footage transitions, black padding/cropping, music looping and levels, narration/subtitle alignment, facts and licensing.

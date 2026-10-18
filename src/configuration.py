@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULTS = {
+    "style": "default",
     "text": {
         "protocol": "responses", "base_url": "https://api.openai.com/v1",
         "api_key": "${OPENAI_API_KEY}", "model": "", "timeout": 180,
@@ -27,7 +28,9 @@ DEFAULTS = {
         "theme": "dark", "orientation": "landscape", "brand": "教学 · 可视化课堂",
         "narration_max_chars": 140, "caption_max_chars": 42, "subtitle_language": "zho",
     },
+    "teaching_research": {"enabled": "auto", "timeout": 20, "min_sources": 2, "max_sources": 4, "max_candidates": 10, "reference_urls": [], "library": "references/teaching/library.sqlite3", "asr": {"enabled": False, "model": "small", "device": "cpu", "compute_type": "int8"}},
     "materials": {"max_chars": 24000, "max_file_mb": 50},
+    "task": {},
     "course": {"language": "中文", "instructions": "", "prompts": {}},
     "assets": {
         "enabled": False, "strategy": "first_success", "strict": False,
@@ -40,8 +43,24 @@ DEFAULTS = {
     },
 }
 
+class _ResolvedConfig(dict):
+    pass
+
+
 def merge(base, updates):
     result = copy.deepcopy(base)
+    inherited = getattr(result, "_inherited", None)
+    if inherited is not None:
+        def discard_explicit(value, path=()):
+            for key, item in value.items():
+                child = path + (key,)
+                if isinstance(item, dict) and item:
+                    discard_explicit(item, child)
+                else:
+                    for inherited_path in list(inherited):
+                        if inherited_path[:len(child)] == child:
+                            del inherited[inherited_path]
+        discard_explicit(updates)
     for key, value in updates.items():
         if isinstance(value, dict) and isinstance(result.get(key), dict):
             result[key] = merge(result[key], value)
@@ -67,6 +86,7 @@ def load_config(filename=None, overrides=None, resolved=True):
     if not isinstance(updates, dict):
         raise ValueError("配置必须是 JSON 对象")
     config = merge(DEFAULTS, updates)
+    config["video_overrides"] = merge(updates.get("video", {}), (overrides or {}).get("video", {}))
     for role, prefix in (("text", "C2V_TEXT"), ("vision", "C2V_VISION"), ("tts", "C2V_TTS")):
         for key in ("base_url", "api_key", "model", "protocol", "voice", "provider"):
             env_name = prefix + "_" + key.upper()
@@ -77,14 +97,45 @@ def load_config(filename=None, overrides=None, resolved=True):
 
 
 def resolve_config(config):
+    inherited = getattr(config, "_inherited", {})
     config = expand_env(copy.deepcopy(config))
+    for path, previous in inherited.items():
+        parent = config
+        for key in path[:-1]:
+            parent = parent.get(key, {}) if isinstance(parent, dict) else {}
+        if isinstance(parent, dict) and path[-1] in parent and parent[path[-1]] == previous:
+            del parent[path[-1]]
+    config = _ResolvedConfig(merge(expand_env(DEFAULTS), config))
+    config._inherited = {}
+
+    def inherit(source, overrides, path):
+        result = copy.deepcopy(overrides)
+        for key, value in source.items():
+            child = path + (key,)
+            if key not in overrides:
+                result[key] = copy.deepcopy(value)
+                if isinstance(value, dict) and value:
+                    result[key] = inherit(value, {}, child)
+                else:
+                    config._inherited[child] = copy.deepcopy(value)
+            elif isinstance(value, dict) and isinstance(overrides[key], dict):
+                result[key] = inherit(value, overrides[key], child)
+        return result
+    if not isinstance(config.get("style", "default"), (str, dict)):
+        raise ValueError("style 必须是风格 ID 字符串或包含 id 的对象")
+    if isinstance(config.get("style"), dict) and not config["style"].get("id"):
+        raise ValueError("style.id 不能为空")
+    task = config.get("task") if isinstance(config.get("task"), dict) else {}
+    course = config.get("course") if isinstance(config.get("course"), dict) else {}
+    config["task"] = inherit(course, task, ("task",))
     if config["vision"].get("inherit_text", True):
         overrides = {key: value for key, value in config["vision"].items() if value not in (None, "")}
-        config["vision"] = merge(config["text"], overrides)
+        config["vision"] = inherit(config["text"], overrides, ("vision",))
     if config["tts"]["provider"] == "openai":
         for key in ("base_url", "api_key"):
             if not config["tts"].get(key):
                 config["tts"][key] = config["text"].get(key)
+                config._inherited[("tts", key)] = copy.deepcopy(config["tts"][key])
     return config
 
 def validate_endpoint(url):
@@ -104,6 +155,9 @@ def validate_model(settings, role):
         raise ValueError(f"请配置 {role}.api_key 或对应环境变量；本地无认证服务可填任意非空值")
     if settings.get("token_parameter", "max_completion_tokens") not in ("max_tokens", "max_completion_tokens"):
         raise ValueError("token_parameter 必须是 max_tokens 或 max_completion_tokens")
+    fallbacks = settings.get("fallback_models", [])
+    if not isinstance(fallbacks, list) or any(not isinstance(model, str) or not model.strip() for model in fallbacks):
+        raise ValueError(f"{role}.fallback_models must be an ordered list of model IDs")
     if not isinstance(settings.get("extra_body", {}), dict):
         raise ValueError("extra_body 必须是 JSON 对象")
 

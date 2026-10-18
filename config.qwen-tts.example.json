@@ -1,0 +1,17 @@
+{
+  "tts": {
+    "provider": "qwen_audio",
+    "base_url": "https://llm-jioe96u6f6snbp4q.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    "api_key": "${C2V_QWEN_TTS_API_KEY}",
+    "model": "qwen-audio-3.1-tts-next",
+    "voice": "longanhuan_v3.6",
+    "timeout": 120,
+    "max_retries": 0,
+    "available_models": [
+      "qwen-audio-3.1-tts-next",
+      "qwen-audio-3.0-tts-plus",
+      "qwen-audio-3.0-tts-flash",
+      "qwen-audio-3.1-tts-flash"
+    ]
+  }
+}

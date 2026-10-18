@@ -1,0 +1,24 @@
+{
+  "researched_at": "2026-10-13",
+  "runtime": "Offline Node.js path generation -> existing Manim renderer",
+  "libraries": [
+    {
+      "id": "roughjs",
+      "version": "4.6.6",
+      "repo": "https://github.com/rough-stuff/rough",
+      "stars": 21260,
+      "file": "rough.cjs",
+      "license": "MIT",
+      "sha256": "f10ad1eacdb19b1a837ad311f80de596ef206046247a3fae9951d8f2adc59e36"
+    },
+    {
+      "id": "perfect-freehand",
+      "version": "1.2.2",
+      "repo": "https://github.com/steveruizok/perfect-freehand",
+      "stars": 5756,
+      "file": "perfect-freehand.cjs",
+      "license": "MIT",
+      "sha256": "34f7a6ee87cf16446c5608179a4f94022126b50216066f8dd57bb16138eee710"
+    }
+  ]
+}

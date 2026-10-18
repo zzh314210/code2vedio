@@ -1,0 +1,36 @@
+{
+  "id": "default",
+  "title": "default",
+  "description": "通用的 2D Manim 动画风格，优先清晰叙事与可读性。",
+  "video": {
+    "theme": "dark",
+    "orientation": "landscape",
+    "brand": "Code2Video",
+    "style_palette": {
+      "background": "#0b1020",
+      "primary": "#58C4DD",
+      "emphasis": "#FFFF00",
+      "secondary": "#83C167",
+      "foreground": "#FFFFFF"
+    },
+    "layout": "classic",
+    "reset_between_beats": true,
+    "exit_fade": true
+  },
+  "version": "1.1.0",
+  "sources": [
+    {
+      "name": "manim-composer",
+      "source": "https://github.com/adithya-s-k/manim_skill",
+      "license": "MIT",
+      "adaptation": "style_skills/technical",
+      "license_file": "style_skills/technical/LICENSE.upstream.txt"
+    },
+    {
+      "name": "manimce-best-practices",
+      "source": "https://github.com/adithya-s-k/manim_skill",
+      "license": "MIT",
+      "adaptation": "style_skills/technical"
+    }
+  ]
+}

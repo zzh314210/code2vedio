@@ -1,0 +1,34 @@
+{
+  "id": "studio_sketch",
+  "title": "手绘课堂",
+  "description": "Rough.js 线条、纸面色与方向标注。适合解题和原理演示。",
+  "version": "1.1.0",
+  "sources": [
+    {
+      "url": "https://github.com/excalidraw/excalidraw",
+      "usage": "Visual grammar adapted; render with existing Manim pipeline. See design_research/SOURCES.md."
+    }
+  ],
+  "video": {
+    "quality": "high",
+    "fps": 30,
+    "theme": "light",
+    "layout": "classic",
+    "template_id": "studio_sketch",
+    "style_palette": {
+      "background": "#FBF7EE",
+      "foreground": "#283A44",
+      "primary": "#196CA5",
+      "emphasis": "#C56127",
+      "secondary": "#28784D",
+      "muted": "#526570",
+      "panel": "#F0EADB",
+      "line": "#CEC8BA"
+    },
+    "reset_between_beats": true,
+    "exit_fade": false,
+    "brand": "Frame / 可视化讲解",
+    "font": "KaiTi",
+    "style_lock": true
+  }
+}

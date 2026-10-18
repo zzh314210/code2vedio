@@ -44,6 +44,9 @@ test_env/
 outputs/
 workspace/
 projects/
+video_projects/
+.tmp/
+config.local.json.bak
 node_modules/
 media/
 CASES/
@@ -55,6 +58,7 @@ CASES/
 *.key
 api_config.json
 config.local.json
+config.qwen-tts.local.json
 
 # Test outputs
 *.log
@@ -66,3 +70,32 @@ htmlcov/
 *.tmp
 *.temp
 .cache/
+
+# Web source utilities are not Python library artifacts
+!web/src/lib/
+!web/src/lib/**
+
+# Local teaching corpus and private voice settings
+references/teaching/*.sqlite3*
+config.gpt-sovits.local.json
+
+# Local production outputs, downloaded research and development-only skills
+/deliverables/
+/references/
+/design_research/
+/style_skills/upstream/
+/style_skills/installed/
+/tasks/
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.webm
+*.mkv
+*.safetensors
+*.ckpt
+*.pth
+*.pt
+*.onnx
+*.sqlite3*
+config.*.local.json

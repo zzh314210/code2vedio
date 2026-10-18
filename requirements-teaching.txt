@@ -1,0 +1,8 @@
+# Install with: .venv/Scripts/python.exe -m pip install -r requirements-teaching.txt
+--index-url https://pypi.org/simple
+agent-reach @ https://github.com/Panniantong/Agent-Reach/archive/94f06c1969dfc1834001269d79d3ad0972d9dee6.zip
+bilibili-cli==0.6.2
+bilibili-api-python==17.4.2
+# 0.8 has a broken wheel (module omitted).
+qrcode-terminal==0.7
+beautifulsoup4==4.15.0

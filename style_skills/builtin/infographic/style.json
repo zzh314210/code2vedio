@@ -1,0 +1,36 @@
+{
+  "id": "infographic",
+  "title": "infographic",
+  "description": "面向复杂主题的卡片、流程、时间线和数据关系可视化。",
+  "video": {
+    "theme": "light",
+    "orientation": "landscape",
+    "brand": "Infographic",
+    "style_palette": {
+      "background": "#F8FAFC",
+      "primary": "#2563EB",
+      "emphasis": "#DC2626",
+      "secondary": "#0F766E",
+      "foreground": "#0F172A"
+    },
+    "layout": "minimal",
+    "reset_between_beats": true,
+    "exit_fade": true
+  },
+  "version": "1.1.0",
+  "sources": [
+    {
+      "name": "manim-composer",
+      "source": "https://github.com/adithya-s-k/manim_skill",
+      "license": "MIT",
+      "adaptation": "style_skills/technical",
+      "license_file": "style_skills/technical/LICENSE.upstream.txt"
+    },
+    {
+      "name": "manimce-best-practices",
+      "source": "https://github.com/adithya-s-k/manim_skill",
+      "license": "MIT",
+      "adaptation": "style_skills/technical"
+    }
+  ]
+}

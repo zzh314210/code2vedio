@@ -113,113 +113,11 @@ def check_pdf(directory):
     writer.add_blank_page(width=400, height=300)
     scanned = directory / "scan.pdf"
     writer.write(str(scanned))
-    try:
-        load_materials([scanned], "数量比较", DEFAULTS["materials"])
-    except ValueError as error:
-        require("OCR" in str(error), "扫描PDF错误不明确")
-    else:
-        raise RuntimeError("空白/扫描 PDF 不应被静默接受")
+    scanned_input = load_materials([scanned], "数量比较", DEFAULTS["materials"])
+    require(not scanned_input["selected_chunks"] and "note" in scanned_input["sources"][0], "未解析 PDF 必须明确标注")
     require(page_numbers("1-2,4", 4) == [0, 1, 3], "PDF页码筛选失败")
 
 
-def wait_job(web, identifier):
-    deadline = time.monotonic() + 45
-    while time.monotonic() < deadline:
-        with web.LOCK:
-            job = copy.deepcopy(web.JOBS[identifier])
-        if job["status"] in ("complete", "failed"):
-            require(job["status"] == "complete", "Web任务失败: " + str(job.get("error") or "未知错误"))
-            return job
-        time.sleep(0.1)
-    raise RuntimeError("Web任务超时")
-
-
-def check_web(config, directory):
-    import web.app as web
-    web.WORKSPACE = directory / "web-workspace"
-    web.WORKSPACE.mkdir()
-    web.PROJECTS = directory / "web-projects"
-    web.PROJECTS.mkdir()
-    web.JOBS.clear()
-    web.current_config = lambda: copy.deepcopy(config)
-    web.save_config = lambda updates: merge(config, updates)
-    credentials_dir = directory / "credentials-check"
-    credentials_dir.mkdir()
-    old_credentials = merge(config, {"tts": {"provider": "http", "url": "https://old.example/speech", "headers": {"Authorization": "Bearer old-test-token"}}})
-    new_credentials = merge(config, {"tts": {"provider": "http", "url": "https://new.example/speech", "headers": {"Authorization": "Bearer new-test-token"}}})
-    (credentials_dir / "settings.json").write_text(json.dumps(public_config(old_credentials)), encoding="utf-8")
-    web.current_config = lambda: copy.deepcopy(new_credentials)
-    try:
-        web.saved_job_config(credentials_dir)
-    except ValueError:
-        pass
-    else:
-        raise RuntimeError("HTTP TTS 地址变化后不能恢复 Authorization 到旧地址")
-    finally:
-        web.current_config = lambda: copy.deepcopy(config)
-    client = web.app.test_client()
-    headers = {"X-C2V-CSRF": client.get("/api/session").get_json()["csrf"]}
-    require(client.get("/").status_code == 200, "Web首页不可用")
-    require(client.get("/", headers={"Host": "attacker.example"}).status_code == 403, "Host保护缺失")
-    require(client.post("/api/config", json={}).status_code == 403, "CSRF保护缺失")
-    exposed = client.get("/api/config").get_data(as_text=True)
-    require(config["text"]["api_key"] not in exposed, "配置返回了密钥")
-    require(client.post("/api/models", json={}, headers=headers).status_code == 200, "模型列表查询失败")
-    from lesson_prompts import TEMPLATES
-    project_config = merge(config, {"course": {"instructions": "FIRST_COURSE_ONLY"}})
-    response = client.post("/api/jobs", data={"topic": "数量比较", "stop_after": "outline", "config": json.dumps(project_config), "materials": (io.BytesIO("# 数量比较\n基期100，现期120。".encode()), "lesson.md"), "resources": [(io.BytesIO(b"def draw_svg():\n    return 'project only'\n"), "draw_icon.py"), (io.BytesIO(b'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/></svg>'), "local.svg"), (io.BytesIO("# 本课程例题参考".encode()), "example.md")], "prompt_templates": (io.BytesIO((TEMPLATES["outline"] + "\nFIRST_TEMPLATE_ONLY").encode()), "outline.txt")}, headers=headers)
-    require(response.status_code == 200, response.get_data(as_text=True))
-    identifier = response.get_json()["job_id"]
-    wait_job(web, identifier)
-    base = web.job_root(identifier)
-    require(base.parent == web.PROJECTS.resolve(), "新 Web 任务没有独立项目目录")
-    snapshot = (base / "settings.json").read_text(encoding="utf-8")
-    require(config["text"]["api_key"] not in snapshot, "任务快照复制了真实密钥")
-    require(client.get(f"/api/jobs/{identifier}/file/output/outline.json").status_code == 200, "工件不可访问")
-    listing = client.get(f"/api/jobs/{identifier}/files").get_json()
-    paths = {item["path"] for item in listing["files"]}
-    require({"prompts/policy.txt", "prompts/outline.txt", "prompts/requirements.json", "materials/lesson.md", "examples/example.md", "code/svg/draw_icon.py", "code/runtime/scene_runtime.py", "output/assets/local/local.svg"}.issubset(paths), "项目输入没有完整归档")
-    require(any(path.startswith("output/requests/") and path.endswith(".txt") for path in paths), "实际模型提示词未记录")
-    require(config["text"]["api_key"] not in client.get(f"/api/jobs/{identifier}/config").get_data(as_text=True), "项目配置接口泄露密钥")
-    for path in ("output/../settings.json", "output/../job.json", "materials/../settings.json", "output/../../other/settings.json"):
-        require(client.get(f"/api/jobs/{identifier}/file/{path}").status_code == 400, "私密路径越权: " + path)
-    response = client.post(f"/api/jobs/{identifier}/continue", json={"stop_after": "storyboard", "allow_generated_code": False}, headers=headers)
-    require(response.status_code == 200, response.get_data(as_text=True))
-    wait_job(web, identifier)
-    outline = client.get(f"/api/jobs/{identifier}/file/output/outline.json").get_json()
-    outline["sections"][0]["title"] = "修改后的数量比较"
-    response = client.post(f"/api/jobs/{identifier}/rerun", json={"stop_after": "outline", "edit_name": "outline.json", "edit_data": outline}, headers=headers)
-    require(response.status_code == 200, response.get_data(as_text=True))
-    changed = response.get_json()["job_id"]
-    require(changed != identifier, "修改应创建新版本")
-    wait_job(web, changed)
-    require(client.get(f"/api/jobs/{changed}/file/output/outline.json").get_json()["sections"][0]["title"] == "修改后的数量比较", "编辑丢失")
-    require(web.job_root(changed) != base, "新版本未隔离目录")
-    require((web.job_root(changed) / "materials/lesson.md").is_file(), "新版本未复制教材")
-    require((web.job_root(changed) / "code/svg/draw_icon.py").is_file(), "新版本未复制绘图源码")
-    original = (base / "prompts/outline.txt").read_text(encoding="utf-8")
-    response = client.post(f"/api/jobs/{identifier}/rerun", json={"stop_after": "outline", "edit_name": "prompts/outline.txt", "edit_data": original + "\nSECOND_TEMPLATE_ONLY"}, headers=headers)
-    require(response.status_code == 200, response.get_data(as_text=True))
-    edited_id = response.get_json()["job_id"]
-    wait_job(web, edited_id)
-    require((base / "prompts/outline.txt").read_text(encoding="utf-8") == original, "编辑提示词污染了原项目")
-    require("SECOND_TEMPLATE_ONLY" in (web.job_root(edited_id) / "prompts/outline.txt").read_text(encoding="utf-8"), "完整模板编辑未生效")
-    response = client.post("/api/jobs", data={"topic": "第二个视频", "stop_after": "outline", "config": json.dumps(config), "materials": (io.BytesIO("# 第二个视频\n独立教材。".encode()), "lesson.md")}, headers=headers)
-    require(response.status_code == 200, response.get_data(as_text=True))
-    independent = response.get_json()["job_id"]
-    wait_job(web, independent)
-    other_base = web.job_root(independent)
-    require("FIRST_COURSE_ONLY" not in (other_base / "prompts/requirements.json").read_text(encoding="utf-8"), "课程要求串入新视频")
-    require("FIRST_TEMPLATE_ONLY" not in (other_base / "prompts/outline.txt").read_text(encoding="utf-8"), "完整模板串入新视频")
-    require("独立教材" in (other_base / "materials/lesson.md").read_text(encoding="utf-8"), "同名教材未独立保存")
-    require(not (other_base / "code/svg/draw_icon.py").exists(), "素材源码串入新视频")
-    web.JOBS.clear()
-    web.restore_jobs()
-    require(identifier in web.JOBS and independent in web.JOBS, "重启后项目任务未恢复")
-    legacy_id = "0123456789ab"
-    legacy = web.WORKSPACE / legacy_id
-    legacy.mkdir()
-    require(web.job_root(legacy_id) == legacy.resolve(), "旧 workspace 任务不兼容")
 
 
 def check_project_cli(config, directory, pack):
@@ -294,7 +192,7 @@ def main():
         counts = dict(COUNTS)
         VideoPipeline("数量比较", config, output, [material], resume=True).run()
         require(COUNTS == counts, "续跑不应再次调用模型或TTS")
-        require((output / "materials/lesson.md").is_file(), "CLI 教材原件未复制到项目")
+        require((output / "input/materials/lesson.md").is_file(), "CLI 素材原件未复制到项目")
         require((output / "code/manim/section_1_revision_0.py").is_file(), "Manim 绘图源码未存入项目")
         require(config["text"]["api_key"] not in (output / "settings.json").read_text(encoding="utf-8"), "项目快照保存了真实密钥")
         switched_config = resolve_config(merge(config, {"vision": {"protocol": "responses"}}))
@@ -317,14 +215,13 @@ def main():
         require(before != after, "修改旁白后复用了过期配音")
         from project_smoke import check_projects
         pack = check_projects(config, directory)
-        check_web(config, directory)
         check_project_cli(config, directory, pack)
         if args.icons:
             from icon_assets import AssetManager
             settings = merge(DEFAULTS["assets"], {"enabled": True, "sources": {name: {"enabled": True} for name in DEFAULTS["assets"]["sources"]}})
             result = AssetManager(settings, directory).check()
             require(len(result) == 3 and all(item["ok"] for item in result), json.dumps(result, ensure_ascii=False))
-        print(json.dumps({"ok": True, "output": str(final), "checks": ["Responses", "Chat Completions", "OpenAI TTS", "HTTP TTS", "PDF", "Manim repair", "vision feedback", "FFmpeg MP4", "resume", "narration invalidation", "Web upload/edit/continue", "independent video projects", "full prompt editing", "SVG/source archiving", "project restore", "CSRF", "secret/path protection", "project packs", "extension manifest/AST", "runtime code invalidation", "isolated PYTHONPATH", "real extension render"], "edge": args.edge, "icons": args.icons}, ensure_ascii=False, indent=2))
+        print(json.dumps({"ok": True, "output": str(final), "checks": ["Responses", "Chat Completions", "OpenAI TTS", "HTTP TTS", "PDF", "Manim repair", "vision feedback", "FFmpeg MP4", "resume", "narration invalidation", "independent video projects", "full prompt editing", "SVG/source archiving", "project restore", "secret/path protection", "project packs", "extension manifest/AST", "runtime code invalidation", "isolated PYTHONPATH", "real extension render"], "edge": args.edge, "icons": args.icons}, ensure_ascii=False, indent=2))
     finally:
         server.shutdown()
         server.server_close()

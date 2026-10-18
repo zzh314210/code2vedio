@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import importlib.metadata
 import json
 import os
@@ -11,13 +12,19 @@ from configuration import ROOT, load_config, validate_endpoint
 
 
 def parser():
-    command = argparse.ArgumentParser(description="中文教材 → 配音驱动的通用 Manim 教学视频（Windows）")
+    command = argparse.ArgumentParser(description="通用提示词与素材驱动的 CLI 视频流水线")
     command.add_argument("--config", help="JSON 配置文件，默认 config.local.json")
     command.add_argument("--topic", "--knowledge_point", dest="topic", help="目标知识点")
+    command.add_argument("--prompt", help="用户视频生成需求；优先于兼容参数 --topic")
+    command.add_argument("--style", help="项目画面风格 ID")
+    command.add_argument("--reference", action="append", default=[], help="外部参考素材，可重复")
+    command.add_argument("--task-file", help="任务 JSON；素材相对路径以该文件所在目录解析")
+    command.add_argument("--list-styles", action="store_true")
+    command.add_argument("--list-tts", action="store_true")
     command.add_argument("--material", action="append", default=[], help="Markdown/PDF 教材，可重复")
     command.add_argument("--pdf-pages", help="PDF 页码，如 2-5,8；应用于输入的所有 PDF")
     command.add_argument("--output", help="项目目录（兼容旧参数）；新项目产物放在其 output 子目录")
-    command.add_argument("--project", help="本视频独立项目目录；默认 projects/日期-知识点--ID")
+    command.add_argument("--project", help="独立项目目录；默认 video_projects/日期-任务--ID")
     command.add_argument("--project-pack", help="显式注入可信项目包目录（提示词、course/video、教材、扩展）；只用于新项目")
     command.add_argument("--course-file", help="本视频要求 JSON；可含 course/video，或直接 instructions/prompts")
     command.add_argument("--prompts-dir", help="本视频完整提示词模板目录：policy/outline/storyboard/code/review.txt")
@@ -36,8 +43,10 @@ def parser():
     command.add_argument("--vision-model")
     command.add_argument("--feedback", "--use_feedback", action="store_true", default=None)
     command.add_argument("--no-feedback", "--no_feedback", dest="feedback", action="store_false")
-    command.add_argument("--tts-provider", choices=["edge", "openai", "http", "none"])
+    command.add_argument("--tts-provider", help="edge/openai/http/none 或已注册插件")
     command.add_argument("--tts-voice")
+    command.add_argument("--tts-model", help="独立 TTS 模型 ID，不影响文本模型")
+    command.add_argument("--tts-base-url", help="独立 TTS 服务地址")
     command.add_argument("--quality", choices=["low", "medium", "high"])
     command.add_argument("--doctor", action="store_true", help="离线检查依赖、FFmpeg、配置字体")
     command.add_argument("--list-models", action="store_true", help="查询所配置服务 /models（服务可能不支持）")
@@ -80,6 +89,7 @@ def validate_runtime(config):
 
 
 def main(argv=None):
+    project_guard = contextlib.ExitStack()
     arguments = parser().parse_args(argv)
     overrides = {"text": {}, "vision": {}, "tts": {}, "video": {}}
     for key in ("protocol", "base_url", "api_key", "model"):
@@ -89,7 +99,7 @@ def main(argv=None):
         value = getattr(arguments, "vision_" + key)
         if value is not None:
             overrides["vision"][key] = value
-    for key in ("provider", "voice"):
+    for key in ("provider", "voice", "model", "base_url"):
         if getattr(arguments, "tts_" + key) is not None:
             overrides["tts"][key] = getattr(arguments, "tts_" + key)
     if arguments.feedback is not None:
@@ -98,7 +108,37 @@ def main(argv=None):
         overrides["video"]["quality"] = arguments.quality
     config = None
     try:
-        config = load_config(arguments.config, overrides)
+        if arguments.list_styles:
+            from styles import list_styles
+            print(json.dumps(list_styles(), ensure_ascii=False, indent=2))
+            return 0
+        if arguments.list_tts:
+            from narration import list_tts_providers
+            print(json.dumps(list_tts_providers(), ensure_ascii=False))
+            return 0
+        from configuration import merge, resolve_config
+        config = load_config(arguments.config, overrides, resolved=False)
+        if arguments.task_file:
+            from task_schema import load_task
+            task = load_task(arguments.task_file)
+            task_root = Path(arguments.task_file).expanduser().resolve().parent
+            config = merge(config, task.get("config", {}))
+            config["video_overrides"] = merge(config.get("video_overrides", {}), task.get("config", {}).get("video", {}))
+            config = merge(config, {"tts": task.get("tts", {}), "vision": task.get("review", {}), "style": task.get("style", config.get("style", "default"))})
+            arguments.prompt = arguments.prompt or task["prompt"]
+            for field, target in (("materials", arguments.material), ("references", arguments.reference)):
+                for filename in task.get(field, []):
+                    path = Path(filename).expanduser()
+                    target.append(str(path if path.is_absolute() else task_root / path))
+        if arguments.style:
+            overrides["style"] = arguments.style
+        unresolved_config = merge(config, overrides)
+        unresolved_config["video_overrides"] = merge(unresolved_config.get("video_overrides", {}), overrides.get("video", {}))
+        config = resolve_config(merge(config, overrides))
+        arguments.topic = arguments.prompt or arguments.topic
+        if arguments.resume and not arguments.topic and (arguments.project or arguments.output):
+            saved_task = Path(arguments.project or arguments.output).expanduser().resolve() / "task.json"
+            arguments.topic = json.loads(saved_task.read_text(encoding="utf-8-sig"))["prompt"]
         validate_runtime(config)
         if arguments.doctor:
             doctor(config)
@@ -133,7 +173,7 @@ def main(argv=None):
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0 if all(item["ok"] for item in result) else 1
         if not arguments.topic:
-            raise ValueError("请提供 --topic 知识点")
+            raise ValueError("请提供 --prompt 视频需求或 --task-file")
         if not arguments.plan_only and arguments.stop_after in ("render", "review", "compose") and not arguments.allow_generated_code:
             raise ValueError("渲染会执行模型生成的 Python。请先 --plan-only 检查教案，确认后使用 --allow-generated-code；建议无敏感文件的隔离账户运行。")
         from pipeline import VideoPipeline
@@ -143,29 +183,45 @@ def main(argv=None):
             raise ValueError("--project 与 --output 不能同时指定")
         if arguments.resume and not (arguments.project or arguments.output):
             raise ValueError("续跑请明确指定 --project 或 --output，避免创建新项目")
-        if arguments.resume and any((arguments.project_pack, arguments.course_file, arguments.prompts_dir, arguments.resource)):
+        if arguments.resume and any((arguments.project_pack, arguments.course_file, arguments.prompts_dir, arguments.resource, arguments.reference, arguments.task_file)):
             raise ValueError("续跑不能重新注入项目输入，请创建新项目")
         base = Path(arguments.project or arguments.output).expanduser().resolve() if arguments.project or arguments.output else new_project_path(arguments.topic)
+        from execution import project_lock
+        base.mkdir(parents=True, exist_ok=True)
+        project_guard.enter_context(project_lock(base))
         if arguments.resume and (base / "settings.json").is_file():
             config = resolve_config(merge(restore_project_config(base, config), overrides))
         elif (base / "project.json").exists():
             raise ValueError("项目已存在；原配置续跑用 --resume，修改课程请使用新的项目目录")
+        elif not arguments.resume:
+            config = unresolved_config
         if arguments.project_pack:
-            config = merge(config, project_pack_config(arguments.project_pack))
+            pack_config = project_pack_config(arguments.project_pack)
+            config = merge(config, pack_config)
+            config["video_overrides"] = merge(config.get("video_overrides", {}), pack_config.get("video", {}))
+            config["task"] = merge(config.get("task", {}), pack_config.get("course", {}))
         if arguments.course_file:
             course = json.loads(Path(arguments.course_file).read_text(encoding="utf-8-sig"))
             if not isinstance(course, dict):
                 raise ValueError("课程要求必须是 JSON 对象")
             config = merge(config, course if "course" in course or "video" in course else {"course": course})
+            config["video_overrides"] = merge(config.get("video_overrides", {}), course.get("video", {}))
+            config["task"] = merge(config.get("task", {}), course.get("course", course if "video" not in course else {}))
         config = resolve_config(merge(config, overrides))
+        from styles import load_style, style_video_config
+        config["video_overrides"] = merge(config.get("video_overrides", {}), overrides.get("video", {}))
+        style_id = config.get("style", "default")
+        if not arguments.resume:
+            config = style_video_config(config, load_style(style_id.get("id") if isinstance(style_id, dict) else style_id))
         if arguments.pdf_pages is not None:
             config.setdefault("course", {})["pdf_pages"] = arguments.pdf_pages
+            config.setdefault("task", {})["pdf_pages"] = arguments.pdf_pages
         validate_runtime(config)
         initialize_project(base, arguments.topic, config)
         if arguments.project_pack:
             apply_project_pack(arguments.project_pack, base)
         if not arguments.resume:
-            write_json(base / "prompts/requirements.json", config.get("course", {}))
+            write_json(base / "prompts/requirements.json", config.get("task", config.get("course", {})))
         if arguments.prompts_dir:
             for name in PROMPT_NAMES:
                 source = Path(arguments.prompts_dir).expanduser().resolve() / (name + ".txt")
@@ -175,20 +231,28 @@ def main(argv=None):
             archive_resource(base, source.name, source.read_bytes(), config["assets"].get("color", "#287D68"))
         output = base if arguments.resume and (base / "manifest.json").is_file() else base / "output"
         print("视频项目目录: " + str(base))
-        print("注意：教材选段会发送给文本服务；启用评审会上传视频帧，旁白会发送给 TTS 服务。")
-        pages = arguments.pdf_pages or config.get("course", {}).get("pdf_pages")
+        print("注意：参考文本、图片及视频抽帧会发送给规划模型；启用评审会上传渲染帧，旁白会发送给 TTS，可选转录会上传音频。")
+        pages = arguments.pdf_pages or config.get("task", {}).get("pdf_pages") or config.get("course", {}).get("pdf_pages")
         materials = list(arguments.material)
         if not arguments.resume:
             supplied_names = {Path(filename).name.casefold() for filename in materials}
-            bundled = [str(file) for file in sorted((base / "materials").iterdir()) if file.is_file() and file.suffix.lower() in (".md", ".markdown", ".pdf")]
+            bundled = [str(file) for file in sorted((base / "input/materials").iterdir()) if file.is_file() and file.name != "index.json"]
             if any(Path(filename).name.casefold() in supplied_names for filename in bundled):
-                raise ValueError("输入教材与项目包教材同名，请重命名后重试")
+                raise ValueError("输入素材与项目包素材同名，请重命名后重试")
             materials = bundled + materials
-        result = VideoPipeline(arguments.topic, config, output, materials, pages, arguments.resume, on_event=lambda event: print(f"[{event['stage']}] {event['status']} {event['message']}"), project=base).run(arguments.plan_only, arguments.stop_after)
+        references = list(arguments.reference)
+        if not arguments.resume:
+            references = [str(file) for file in sorted((base / "input/references").iterdir()) if file.is_file() and file.name != "index.json"] + references
+        pipeline = VideoPipeline(arguments.topic, config, output, materials, pages, arguments.resume, on_event=lambda event: print(f"[{event['stage']}] {event['status']} {event['message']}"), project=base, references=references)
+        if not arguments.resume:
+            from configuration import public_config
+            write_json(base / "task.json", {"schema_version": 1, "prompt": arguments.topic, "style": pipeline.style.id, "materials": ["input/materials/" + name for name in json.loads((base / "input/materials/index.json").read_text(encoding="utf-8"))["files"]], "references": ["input/references/" + name for name in json.loads((base / "input/references/index.json").read_text(encoding="utf-8"))["files"]], "config": {}, "tts": {}, "review": {}})
+        result = pipeline.run(arguments.plan_only, arguments.stop_after)
         print(f"完成: {result}")
         return 0
     except Exception as failure:
-        message = str(failure)
+        from configuration import sanitize_error
+        message = sanitize_error(str(failure), config)
         if config:
             for role in ("text", "vision", "tts"):
                 secret = config[role].get("api_key")
@@ -196,6 +260,8 @@ def main(argv=None):
                     message = message.replace(secret, "<redacted>")
         print("失败: " + message, file=sys.stderr)
         return 1
+    finally:
+        project_guard.close()
 
 
 if __name__ == "__main__":

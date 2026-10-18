@@ -1,0 +1,8 @@
+FROM python:3.11-slim-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg nodejs libcairo2-dev libpango1.0-dev pkg-config g++ fonts-noto-cjk texlive-latex-extra texlive-fonts-recommended dvisvgm && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir manim==0.21.0
+RUN groupadd --gid 65532 worker && useradd --uid 65532 --gid 65532 --no-create-home worker
+USER 65532:65532
+WORKDIR /project
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 PYTHONSAFEPATH=1
+CMD ["python", "-m", "manim", "--version"]

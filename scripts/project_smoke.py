@@ -2,6 +2,7 @@ import copy
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from configuration import merge, resolve_config
@@ -30,6 +31,10 @@ def check_video_constraints(config):
     pipeline.config["video"].update(narration_max_chars=200, caption_max_chars=80)
     pipeline.config["course"] = {"language": "测试语言"}
     pipeline.extensions = {}
+    from styles import load_style
+    pipeline.style = load_style("default")
+    pipeline.topic = "测试"
+    pipeline.config["task"] = pipeline.config["course"]
     validate_video_constraints(pipeline.config["video"])
     outline = {"sections": [{"id": "section_1"}]}
     beat = {"narration": "文" * 200, "caption": "字" * 80, "visual": "比较数量"}
@@ -56,7 +61,8 @@ def check_video_constraints(config):
         invalid["sections"][0]["beats"][0][field] += "超"
         rejected(lambda: pipeline.validate_storyboard(invalid, outline), "旧配置默认上限失效")
     rejected(lambda: validate_video_constraints({"subtitle_language": "invalid"}), "接受了无效字幕语言代码")
-    with patch("media.run_command") as command, patch("media.ffmpeg_binary", return_value="ffmpeg"):
+    with patch("media.run_command") as command, patch("media.ffmpeg_binary", return_value="ffmpeg"), patch("media.av.open") as media_input:
+        media_input.return_value.__enter__.return_value.streams = [SimpleNamespace(type="video", base_rate=30, average_rate=30)]
         mux("video.mp4", "audio.wav", "subtitles.srt", "final.mp4", 1, "eng")
         require("language=eng" in command.call_args.args[0], "自定义字幕语言未传给 FFmpeg")
         mux("video.mp4", "audio.wav", "subtitles.srt", "final.mp4", 1)
@@ -114,7 +120,7 @@ def check_projects(config, directory):
     write_json(pack / "course.json", {"course": {"instructions": "PACK_COURSE_ONLY"}, "video": {"brand": "PACK_BRAND_ONLY", "theme": "light"}})
 
     output = project / "output"
-    pipeline = VideoPipeline("数量比较", settings, output, [project / "materials/bundled.md"], project=project)
+    pipeline = VideoPipeline("数量比较", settings, output, [project / "input/materials/bundled.md"], project=project)
     require("PACK_MATERIAL_ONLY" in pipeline.materials["context"], "项目包教材未读入")
     require("smoke_visual" in pipeline.prompt("code", "代码阶段"), "扩展未注入代码提示词")
     pipeline.run(stop_after="storyboard")

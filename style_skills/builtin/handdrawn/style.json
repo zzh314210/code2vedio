@@ -1,0 +1,20 @@
+{
+  "id": "handdrawn",
+  "title": "Hand-drawn sketchbook",
+  "description": "Editorial sketchbook: paper canvas, organic ink strokes, restrained teal and coral marker accents.",
+  "version": "1.0.0",
+  "video": {
+    "theme": "light",
+    "layout": "canvas",
+    "orientation": "landscape",
+    "brand": "",
+    "style_palette": {"background": "#FFF9ED", "foreground": "#29332F", "primary": "#237F79", "emphasis": "#DD654E", "secondary": "#77786A"},
+    "reset_between_beats": true,
+    "exit_fade": false
+  },
+  "sources": [
+    {"name": "Excalidraw", "source": "https://github.com/excalidraw/excalidraw", "license": "MIT", "integration": "Visual reference; not bundled editor"},
+    {"name": "Rough.js", "source": "https://github.com/rough-stuff/rough", "license": "MIT", "integration": "Sketch stroke design reference; native Manim implementation"},
+    {"name": "frontend-design", "source": "https://github.com/anthropics/skills/tree/main/skills/frontend-design", "license": "See archived frontend-design.LICENSE.txt", "integration": "Application-level design principles adapted for video; not an agent skill invocation"}
+  ]
+}
