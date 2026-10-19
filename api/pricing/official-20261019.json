@@ -1,0 +1,13 @@
+{
+  "currency": "CNY",
+  "verified_at": "2026-10-19",
+  "source": "https://help.aliyun.com/zh/model-studio/model-pricing",
+  "cache_source": "https://help.aliyun.com/zh/model-studio/context-cache",
+  "endpoint_suffix": ".cn-beijing.maas.aliyuncs.com",
+  "rates": [
+    {"model":"kimi-k3","input_micro_per_million":20000000,"output_micro_per_million":100000000,"cached_micro_per_million":2000000,"max_input_tokens":1000000},
+    {"model":"deepseek-v4.1-flash","input_micro_per_million":2000000,"output_micro_per_million":8000000,"cached_micro_per_million":200000,"max_input_tokens":1000000,"offpeak_half":true},
+    {"model":"deepseek-v4.1-flash-1017","input_micro_per_million":2000000,"output_micro_per_million":8000000,"cached_micro_per_million":200000,"max_input_tokens":1000000,"offpeak_half":true},
+    {"model":"deepseek-v4-flash-0731","input_micro_per_million":3000000,"output_micro_per_million":9000000,"cached_micro_per_million":600000,"max_input_tokens":1000000,"offpeak_half":true}
+  ]
+}

@@ -99,3 +99,8 @@ config.gpt-sovits.local.json
 *.onnx
 *.sqlite3*
 config.*.local.json
+
+# Private accounts, encryption keys and per-user libraries
+/private/
+
+/api/bin/

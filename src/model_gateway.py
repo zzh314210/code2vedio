@@ -3,12 +3,16 @@ import json
 import mimetypes
 import re
 import time
+import uuid
 from types import SimpleNamespace
 from pathlib import Path
 
 from openai import OpenAI
 
 from configuration import validate_model
+from public_transport import public_client
+from usage_meter import record_usage
+from billing_client import call as billing_call, BillingError
 
 
 def parse_json(text):
@@ -34,8 +38,10 @@ class ModelGateway:
         self.on_request = on_request
         self.client = OpenAI(
             api_key=settings["api_key"], base_url=settings["base_url"].rstrip("/"),
-            timeout=float(settings.get("timeout", 180)), max_retries=int(settings.get("max_retries", 2)),
+            timeout=float(settings.get("timeout", 180)), max_retries=int(settings.get("max_retries", 2)), **public_client(settings),
         )
+        self.usage_recorded=False
+        self.attempt_id=uuid.uuid4().hex
         self.usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     def request(self, prompt, images=None, max_tokens=None):
@@ -52,9 +58,16 @@ class ModelGateway:
         failures = []
         for index, model in enumerate(models):
             self.settings = {**self.settings, "model": model}
+            self.attempt_id=uuid.uuid4().hex
+            self.usage_recorded=False
             try:
                 return self._request(prompt, images, max_tokens)
+            except BillingError:
+                raise
             except Exception as failure:
+                if not self.usage_recorded:
+                    record_usage(self.settings,self.role,attempt_id=self.attempt_id,extra={'error_type':type(failure).__name__})
+                    billing_call(self.settings,'settle',{'id':self.attempt_id,'metered':False,'usage':{'error_type':type(failure).__name__}})
                 # Keep archived quota-only policies compatible; new fallback_models
                 # explicitly authorize failover for every failed request and role.
                 if not self.settings.get("fallback_models") and legacy:
@@ -68,9 +81,15 @@ class ModelGateway:
         # Preserve the SDK exception type/status for the existing error handler.
         raise failures[-1]
 
+    def meter(self, usage, response=None):
+        if self.usage_recorded:return
+        record_usage(self.settings,self.role,usage,getattr(response,'id',None),getattr(response,'model',None),self.attempt_id)
+        self.usage_recorded=True
+
     def _request(self, prompt, images=None, max_tokens=None):
         if self.on_request:
             self.on_request(self.role, prompt, images or [])
+        billing_call(self.settings,'authorize',{'id':self.attempt_id,'model':self.settings['model'],'role':self.role,'max_output':int(max_tokens or self.settings.get('max_tokens',12000))})
         limit = int(max_tokens or self.settings.get("max_tokens", 12000))
         extra = self.settings.get("extra_body", {})
         if self.settings["protocol"] == "responses":
@@ -80,6 +99,7 @@ class ModelGateway:
                 model=self.settings["model"], input=[{"role": "user", "content": content}],
                 max_output_tokens=limit, extra_body=extra, store=False,
             )
+            self.meter(response.usage,response)
             if response.status == "incomplete":
                 raise ValueError("Responses 返回 incomplete；请提高 text.max_tokens 或减小课程长度")
             text = response.output_text
@@ -92,7 +112,8 @@ class ModelGateway:
             arguments = {self.settings.get("token_parameter", "max_completion_tokens"): limit}
             response = self.client.chat.completions.create(
                 model=self.settings["model"], messages=[{"role": "user", "content": content}],
-                extra_body=extra, stream=bool(self.settings.get("stream", False)), **arguments,
+                extra_body=extra, stream=bool(self.settings.get("stream", False)),
+                **({"stream_options":{"include_usage":True}} if self.settings.get("stream",False) else {}), **arguments,
             )
             if self.settings.get("stream", False):
                 started = time.monotonic()
@@ -101,8 +122,12 @@ class ModelGateway:
                 finish = None
                 usage = None
                 reasoning_chars = 0
+                stream_response_id = None
+                stream_model = None
                 try:
                     for chunk in response:
+                        stream_response_id = getattr(chunk, "id", None) or stream_response_id
+                        stream_model = getattr(chunk, "model", None) or stream_model
                         elapsed = time.monotonic() - started
                         if elapsed > float(self.settings.get("total_timeout", 600)):
                             raise TimeoutError("Model stream exceeded total_timeout")
@@ -118,10 +143,12 @@ class ModelGateway:
                             print(f"[{self.role}] model stream: {elapsed:.0f}s, content={sum(map(len, fragments))} chars, reasoning={reasoning_chars} chars", flush=True)
                             last_progress = time.monotonic()
                 finally:
+                    self.meter(usage, SimpleNamespace(id=stream_response_id, model=stream_model))
                     response.close()
                 if finish != "stop":
                     raise ValueError(f"Model stream did not complete: {finish}")
                 response = SimpleNamespace(choices=[SimpleNamespace(finish_reason=finish, message=SimpleNamespace(content="".join(fragments)))], usage=usage)
+            self.meter(response.usage,response)
             if not response.choices or response.choices[0].finish_reason in ("length", "content_filter"):
                 raise ValueError("Chat Completions 输出被截断/过滤；请提高 max_tokens 或检查输入")
             text = response.choices[0].message.content
@@ -137,8 +164,11 @@ class ModelGateway:
 
     def json(self, prompt, validator=None, attempts=3, images=None):
         error = ""
+        previous = ""
         for attempt in range(attempts):
             suffix = f"\n上次输出未通过校验：{error}。请重新返回完整合法 JSON，不要代码围栏。" if error else ""
+            if previous:
+                suffix += "\n上次输出（仅供定位和修正错误）：\n" + previous[:24000]
             text, unused_usage = self.request(prompt + suffix, images=images)
             try:
                 value = parse_json(text)
@@ -147,4 +177,13 @@ class ModelGateway:
                 return value
             except (ValueError, TypeError, KeyError, SyntaxError) as failure:
                 error = str(failure)[:800]
+                previous = text
+                # An unusable structured response is also a generation failure.
+                # Honor the explicitly configured fallback order within the same retry budget.
+                models = list(dict.fromkeys([self.primary_model, *self.settings.get("fallback_models", [])]))
+                current = self.settings["model"]
+                if attempt + 1 < attempts and current in models and models.index(current) + 1 < len(models):
+                    following = models[models.index(current) + 1]
+                    print(f"[{self.role}] {current} structured output invalid; switching to {following}", flush=True)
+                    self.settings = {**self.settings, "model": following}
         raise ValueError(f"模型结构化输出在 {attempts} 次尝试后仍不合法: {error}")

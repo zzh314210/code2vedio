@@ -141,10 +141,19 @@ class TeachingSources:
     def search(self, query, platform="web", limit=8):
         if platform == "library":
             return {"query": query, "backend": "sqlite-fts5", "results": self.library.search(query, limit)}
+        if platform == "bing":
+            return self.search_bing(query, limit)
+        if platform == "wikipedia":
+            from urllib.parse import urlencode
+            import requests
+            response = requests.get("https://zh.wikipedia.org/w/api.php", params={"action":"query","list":"search","srsearch":query,"srlimit":limit,"format":"json"}, headers={"User-Agent":"FrameStudio/1.0 (educational video research)"}, timeout=self.settings.get("timeout",20))
+            response.raise_for_status()
+            results = [{"title":item["title"],"url":"https://zh.wikipedia.org/wiki/"+__import__('urllib.parse',fromlist=['quote']).quote(item['title']),"kind":"article"} for item in response.json().get("query",{}).get("search",[])]
+            return {"results":results}
         if platform == "bilibili":
             executable = binary("bili")
             if not executable:
-                raise RuntimeError("Install bilibili-cli to search Bilibili")
+                return self.search_bing("site:bilibili.com/video/ " + query, limit)
             raw = command([executable, "search", query, "--type", "video", "-n", str(limit), "--json"], self.settings.get("timeout", 30))
             value = json.loads(raw)
             entries = value.get("data", value.get("results", value)) if isinstance(value, dict) else value
@@ -159,7 +168,28 @@ class TeachingSources:
             return {"query": query, "backend": "agent-reach/bili-cli", "results": results}
         if platform not in ("web", "zhihu"):
             raise ValueError("platform must be web, bilibili, zhihu or library")
-        return {**search_web(("site:zhihu.com " if platform == "zhihu" else "") + query, limit, self.settings.get("timeout", 20)), "backend": "sogou"}
+        search_query = ("site:zhihu.com " if platform == "zhihu" else "") + query
+        try:
+            result = search_web(search_query, limit, self.settings.get("timeout",20))
+            if platform=='zhihu':result['results']=[item for item in result.get('results',[]) if (urlsplit(item['url']).hostname or '').endswith('.zhihu.com') or (urlsplit(item['url']).hostname or '')=='zhihu.com']
+            if result.get('results'):return result
+        except Exception:
+            pass
+        result=self.search_bing(search_query,limit)
+        if platform=='zhihu':result['results']=[item for item in result['results'] if (urlsplit(item['url']).hostname or '').endswith('.zhihu.com') or (urlsplit(item['url']).hostname or '')=='zhihu.com']
+        return result
+
+    def search_bing(self, query, limit):
+        from urllib.parse import urlencode
+        import xml.etree.ElementTree as ET
+        _, raw = get_page("https://www.bing.com/search?" + urlencode({"q":query,"format":"rss"}), self.settings.get("timeout",20))
+        root=ET.fromstring(raw)
+        results=[]
+        for item in root.findall('.//item'):
+            url=item.findtext('link','')
+            if url.startswith(('https://','http://')):
+                results.append({'title':item.findtext('title',url),'url':url,'kind':'article'})
+        return {'results':results[:limit]}
 
     def read_article(self, url):
         # Agent Reach's ready-made Jina reader is especially useful for rich Zhihu pages.

@@ -71,7 +71,7 @@ def validate_snippet(code, extensions=None):
             if not calls or not calls[0].args or not isinstance(calls[0].args[0], ast.Constant) or not isinstance(calls[0].args[0].value, str) or calls[0].args[0].value not in (extensions or {}):
                 raise ValueError("扩展调用必须直接使用本项目注册的名称字面量")
         if isinstance(node, prohibited):
-            raise ValueError("代码片段不能包含 import/while/with/类/函数/异常控制")
+            raise ValueError(f"第{getattr(node, 'lineno', '?')}行含禁止的{type(node).__name__}；代码必须直接内联，不能包含import/while/with/类/函数/异常控制")
         if isinstance(node, ast.Name) and (node.id.startswith("__") or node.id in denied_names):
             raise ValueError(f"不允许的代码标识符: {node.id}")
         if isinstance(node, ast.Attribute):
@@ -86,9 +86,12 @@ def validate_snippet(code, extensions=None):
 def validate_code(value, count, extensions=None, video=None):
     if not isinstance(value, dict) or not isinstance(value.get("beats"), list) or len(value["beats"]) != count:
         raise ValueError(f"代码必须包含 {count} 个 beats")
-    for beat in value["beats"]:
-        validate_snippet(beat["code"], extensions)
-        validate_style_snippet(beat["code"], video)
+    for index, beat in enumerate(value["beats"], 1):
+        try:
+            validate_snippet(beat["code"], extensions)
+            validate_style_snippet(beat["code"], video)
+        except (ValueError, SyntaxError) as error:
+            raise ValueError(f"第{index}个分镜：{error}") from error
 
 
 STAGES = ["outline", "storyboard", "audio", "assets", "code", "render", "review", "compose"]

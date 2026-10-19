@@ -28,7 +28,7 @@ TEMPLATES = {
 每章 1 至 {{max_beats}} 个 beat；每个 beat 一句项目指定语言的自然旁白，一段匹配的动画说明。
 每句讲一个可视化步骤，如拆分概念、比较数量、展示因果、移动分组或变换集合。
 可选 icon_keywords 字段为 0-2 个简单英文实体图标名，如 book、calculator；抽象公式不需要图标。
-旁白中的公式改成适合朗读的表达，字幕 caption 保持精炼。字符上限以项目要求为准。保持大纲的章节顺序与 id。
+旁白中的公式改成适合朗读的表达，字幕 caption 保持精炼。涉及括号或混合运算时，用“先算……再……”或“除以……的差”等表达说清顺序，不能把72÷(21−12)读成容易误解的“72除以21减12”。字幕中的公式保留必要括号。字符上限以项目要求为准。保持大纲的章节顺序与 id。
 输出: {"sections":[{"id":"section_1", "title":"章节标题", "beats":[{"narration":"旁白", "caption":"精炼画面字幕", "visual":"图形、布局和逐步动画说明"}]}]}
 <material_data>
 {{material_context}}
@@ -92,6 +92,14 @@ def code_prompt(section, previous=None, feedback=None, templates=None, settings=
     defaults = {"background": "#F7FAF7" if light else "#0b1020", "primary": "#287D68" if light else "#58C4DD", "emphasis": "#C66A26" if light else "#FFFF00", "secondary": "#59734B" if light else "#83C167", "foreground": "#203C36" if light else "#FFFFFF"}
     for name, color in defaults.items():
         rendered = rendered.replace(color, palette.get(name, color))
+    rendered += """\n代码输出硬性约束（包括纠错版本也必须遵守）：
+每个beats[i].code只是已存在的Scene方法内直接执行的代码片段，不是完整Python模块。
+绝对不要写import、def、lambda、class、while、with、try、return，也不能为了复用图形定义辅助函数。用普通局部变量、列表、for循环和直接构建的VGroup完成画面。
+所有颜色参数（color、fill、fill_color、stroke_color及set_color/set_fill/set_stroke的颜色）直接写self.style_color("primary")等已给出的配色角色。不要用循环变量、列表索引或条件表达式作为颜色，不要写fill=True/False，也不要使用Manim颜色常量。
+文字使用self.scene_text；自绘图形优先使用self.sketch_shape。只返回与输入分镜数量相等的完整beats JSON，不要附加函数、模块或类定义。
+数量图形必须准确：比较量的条形图使用同一比例尺；单位格或图标的数量必须与标签一致，若每格代表多份，必须明确标注单位。大数量优先连续色条，不要绘制数百个格子后随意标注总数。
+标签放在图形之外并保留间隔，公式和结论各占独立行。多个计算路径汇入同一结果时，只展示一个结果标签，不能叠放相同数字。颜色的语义在全章保持一致。
+横屏经典布局中，内容的完整边界尽量位于x=-6..6、y=-2.3..2.25；为标题下方进度线、字幕框以及标签自身高度留白。分镜内只保留当前推理需要的对象，避免旧公式与新结论累积重叠。"""
     return rendered
 
 

@@ -1,5 +1,4 @@
 import importlib.util
-import textwrap
 import re
 import numpy as np
 from pathlib import Path
@@ -157,7 +156,9 @@ class NarratedScene(Scene):
         self._chrome = VGroup(brand, title, rail, progress, plate)
         cues = beat.get("subtitles") or [{"start": 0, "end": beat["duration"], "text": beat["caption"]}]
         for cue in cues:
-            caption = self.scene_text("\n".join(textwrap.wrap(cue["text"], width=20 if portrait else 32)), 25 if portrait else 26)
+            # Wrap by rendered glyph width, preserving number tokens and CJK punctuation.
+            # Fixed character counts could split a value such as "12" across two lines.
+            caption = self.scene_paragraph(cue["text"], width - 0.65, 25 if portrait else 26, line_spacing=0.12)
             if caption.width > width - 0.45:
                 caption.scale_to_fit_width(width - 0.45)
             if caption.height > 0.74:

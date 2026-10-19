@@ -16,6 +16,10 @@ powershell -ExecutionPolicy Bypass -File scripts/start_studio.ps1 -Install
 
 面板输入的密钥仅保存在后端内存；不写浏览器存储或项目文件，重启后需重新输入。也可在本机私有配置文件或 `C2V_TEXT_API_KEY` / `C2V_VISION_API_KEY` 环境变量中设置。`config.qwen-tts.local.json` 存在时优先加载；不要提交这些文件。
 
+## Linux 网页部署
+
+本机部署与运维说明见 [`deploy/README.md`](deploy/README.md)，包含 systemd 常驻服务、HTTPS 反向代理、访问认证和 Docker 隔离渲染。公网域名需通过 `C2V_ALLOWED_ORIGINS` 显式加入允许来源，例如 `https://vedio.myaihub.asia`；多个来源用逗号分隔。未设置时仍仅允许原有本机工作台来源。
+
 ## 模型与配音
 
 示例使用阿里云兼容接口，地址可在私有配置中调整。文本模型按 `kimi-k3 → deepseek-v4-flash-0731 → deepseek-v4.1-flash` 降级；视觉模型按 `deepseek-v4.1-flash → qwen3.7-flash → qwen3.8-flash` 降级；请求失败时保留地址、密钥和图片输入切换模型。可用性、计费及模型支持范围以自己的阿里云服务为准。

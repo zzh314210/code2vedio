@@ -8,6 +8,7 @@ from urllib.parse import urlsplit, urlunsplit
 import edge_tts
 import httpx
 from openai import OpenAI
+from public_transport import public_client
 
 from configuration import validate_endpoint
 from media import pcm_audio, silence
@@ -132,7 +133,7 @@ class Narrator:
             validate_endpoint(settings.get("base_url"))
             if not settings.get("api_key") or not settings.get("model"):
                 raise ValueError("OpenAI TTS 需要配置 api_key、model 和 voice")
-            self.client = OpenAI(api_key=settings["api_key"], base_url=settings["base_url"], timeout=float(settings.get("timeout", 120)), max_retries=int(settings.get("max_retries", 2)))
+            self.client = OpenAI(api_key=settings["api_key"], base_url=settings["base_url"], timeout=float(settings.get("timeout", 120)), max_retries=int(settings.get("max_retries", 2)), **public_client(settings))
         if self.provider == "http":
             validate_endpoint(settings.get("url"))
             if not isinstance(settings.get("payload"), dict):

@@ -1,0 +1,28 @@
+[Unit]
+Description=Frame Studio Go API
+After=network-online.target code2vedio-worker.service
+Wants=network-online.target
+Requires=code2vedio-worker.service
+
+[Service]
+Type=simple
+User=admin1
+Group=admin1
+WorkingDirectory=/data/code2vedio
+Environment=C2V_ALLOWED_ORIGINS=https://vedio.myaihub.asia
+EnvironmentFile=-/data/code2vedio/private/service.env
+ExecStart=/data/code2vedio/api/bin/frame-api
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/data/code2vedio/private
+PrivateTmp=true
+MemoryMax=256M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

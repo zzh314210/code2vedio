@@ -1,0 +1,69 @@
+# Go 用户面板与 Python 视频 Worker
+
+Go `api/` 提供注册登录、bcrypt 密码哈希、HttpOnly Cookie、账户状态、独立调用密钥、余额流水、个人加密配置、计费与网站入口。Python `web/server.py` 提供私有视频工作接口；只监听 `private/worker.sock`，验证由 Go 签名的用户和任务配置。前端维持 React 原布局，新增独立用户页面和交互。
+
+账号数据：`private/users.sqlite3`；AES-GCM 主密钥：`private/users.key`；内部签名密钥：`private/worker.key`。必须一起备份，丢失加密密钥时拒绝重新生成以免静默损坏数据。管理员初始凭据：`private/admin-access.txt`（0600），请登录后修改密码。首个公开注册用户永远是普通用户，不能抢占管理员身份。
+
+备份应使用 SQLite backup API，并保存 `private`、`video_projects` 和历史 `references`。历史无所有者作品只分配给预置管理员。用户的素材库位于 `private/libraries/{user_id}`。试听位于 `private/voice-samples`。用户密钥和平台配置不能提交 Git。
+
+## 构建与服务
+
+```bash
+# Go >=1.26; 当前已下载校验官方 Go 1.27.2 到 .tmp/toolchain/go
+cd api && go test -race ./... && go build -trimpath -o bin/frame-api .
+cd ../web && npm ci && npm run build
+sudo systemctl restart code2vedio-worker code2vedio
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+`code2vedio` 监听127.0.0.1:7860，Nginx转发公网HTTPS。已移除旧 Basic Auth，保留站内用户鉴权。Nginx必须透传 Authorization，`/internal/` 不允许公网访问。Python渲染仍使用原Docker隔离、资源限制与禁网策略。
+
+管理员密码恢复：通过安全环境提供 `C2V_NEW_PASSWORD` 后运行 `api/bin/frame-api --reset-password 用户名`，会撤销该用户全部网页登录。不要把密码写进 shell 历史或命令参数。
+
+## 计费
+
+价目快照在 `api/pricing/official-20261019.json`，按官方北京地域模型价核验，不读取 sub2api 的分组或倍率。原始价目与缓存规则来源分别为厂商价格页和上下文缓存页。当前包含 Kimi K3、DeepSeek V4.1 Flash（含1017）和V4 Flash0731；缓存折扣和北京时间峰谷时段分别计算。未核验的模型/服务不能自动计费。
+
+金额用整数微元运算，累计到任务级后统一向上取整到分，避免每次请求分别进位。调用前原子预占“整个可用上下文 + 最大输出”的费用上限，取得 usage 后按实际输入、输出和缓存 token 结算并释放剩余额度。预占很保守，并非报价。余额不足时在调用前停止。SDK自动重试关闭，每次应用层重试都有独立用量事件。截断/无效JSON等已经消耗 token 的响应同样计费。
+
+用量先写入任务 `usage.jsonl` 并fsync，随后提交Go账本；后续调用前重放未完成的结算，使用调用ID防重。未返回usage的请求保留预占并待核对，不擅自当作0元，也不凭估算直接扣款。管理员需依据上游账单核对后处理；当前没有自动猜测或余额透支。
+
+**生产自动扣费目前关闭。个人密钥的真实生成与用量联调已完成，平台模式尚未启用。** 默认平台调用按已核验官方价格结算，用户自带API Key不重复收取模型费用。启用平台模式前：
+
+1. 把实际已授权的生成与视觉模型配置导入：`api/bin/frame-api --import-platform /安全路径/config.json`。导入支持密钥字段为 `${ENV_NAME}`，需先通过安全方式向该进程提供相应环境变量；变量未设置或为空时拒绝导入。导入仅使用两个模型，不启用备用付费渠道；配音保持免费。
+2. 核对实际服务与价格快照适用范围一致，更新单价和缓存规则后重新测试。
+3. 在私有 `private/service.env` 配置 `C2V_BILLING_ENABLED=true`，然后重启Go服务。如明确决定对自带Key另收服务费，才配置 `C2V_CHARGE_BYOK=true`。
+4. 不默认添加制作费或利润倍率。官方模型费用不包括渲染、存储和带宽，不能据此保证全业务不亏损。
+
+项目 `config.local.json` 的密钥字段引用 `text_api_key` 和 `vision_api_key`，实际密钥由用户提供并保存在仅所有者可读的 `.env`（0600）中，禁止提交Git或输出到日志。管理员原先为空的个人模型配置已通过网站API加密保存，包含本地原有的两条完整降级链；普通用户仍使用自己的配置。
+
+本地生成链为 Kimi K3 → DeepSeek V4 Flash0731 → DeepSeek V4.1 Flash，审核链为 DeepSeek V4.1 Flash → Qwen3.7 Flash → Qwen3.8 Flash。真实列表查询返回178个模型，两个主模型和全部降级模型均在列表内。两个生成降级模型及三个审核模型已通过真实短请求测试，审核请求含实际图片，结果和逐次用量在 `.tmp/live-model-probes/`。真实视频任务 `938eef858abc` 通过 `deploy/test_local_models.py --submit` 提交，其配置加密冻结，状态可用该脚本 `--job 938eef858abc` 轮询。
+
+阿里TTS的免费额度有期限及上限，因此本次测试继续使用已实测的免费Edge语音；edge-tts 7.3.1已解决旧版本403。站内自动扣费保持关闭。
+
+
+## 已有验收
+
+Go测试覆盖密码/会话、注册权限、账户停用、API凭据权限、加密存储、跨用户配置、充值幂等与并发、价格缓存/峰谷、余额预占、用量结算幂等、未知用量保留及任务配置持久化。Python测试覆盖签名边界、上传、作品/视频/规划/素材隔离、重启恢复、真实规划关卡及编辑、usage记录、DNS内网阻断。浏览器脚本 `deploy/check_users.py` 覆盖真实前后端、移动布局、搜索与试听。
+
+早期100秒手绘考公样片 `exam-sketch-demo` 是人工制作的效果验证，保留供对比。后续真实模型生成任务与它区分，见下文。
+
+公网浏览器验收已通过：站内登录、移动布局、素材搜索、音色试听、账户与调用密钥权限。`deploy/check_demo.py` 验证管理员作品中的100秒1080p手绘样片、带鉴权的Range下载、WebVTT字幕和内部接口不可公开访问；使用 `/data/code2vedio-browser-venv/bin/python` 运行。`api/automation_test.go` 验证JSON输入转换、调用者凭据不转发给worker及任务配置冻结。上线服务 `code2vedio`、`code2vedio-worker`、`nginx` 均为active。
+
+补充验收：网页登录会话支持仅本人撤销，撤销其他设备不影响当前设备；退出登录同时清除Cookie与服务端会话，并保持其他用户会话有效。计费存储初始化失败，或启用计费却缺少价格文件时，Go进程拒绝启动，避免带着未初始化的计费模块继续服务。对应回归测试为 `TestSessionRevocationAndLogout` 和 `TestStartupRejectsBillingInitializationFailure`。
+
+模型配置支持独立的地址、密钥和模型名称；默认不复用生成配置进行视觉审核。页面支持手填或获取列表后搜索选择，失败时保留手填入口。实现参考 sub2api 的 `ModelWhitelistSelector.vue` 与 `upstream_models.go` 的列表交互、受限响应读取和常见列表格式。获取时仅复用本人同地址同用途的密钥，阻止重定向、内网地址和过大响应。`api/models_test.go` 与 `deploy/check_models.py` 分别验证真实后端边界和浏览器交互；浏览器成功列表使用模拟响应，不声称已经验证未配置密钥的上游。
+
+## 真实生成与人工精修验收（2026-10-19）
+
+用户提供密钥后，已真实验证生成、视觉及全部已配置降级模型；两个用途的 `/models` 查询均返回178个模型。公网模型配置页也已用本人加密保存的密钥成功获取和搜索列表，密钥输入框未回显原文。短请求探针与逐次用量保留在 `.tmp/live-model-probes/`。
+
+真实任务 `938eef858abc` 是90秒的原创考公牛吃草题，手绘课堂主题、1920×1080、30 fps、免费 Yunxi 配音，包含音频和字幕轨。模型完成大纲、分镜、配音驱动代码生成与初次视觉修正；初版仍有遮挡和单位格数量不符，随后人工精修九个分镜，保留全部原始版本。最终三章分别为 revision 3、2、2，修改后的画面均重新经过真实视觉审核并通过。人工核验：生长速度12份/天，原草量72份，18头牛净消耗6份/天，答案12天，代回21头牛为8天。
+
+精修脚本 `deploy/polish_exam_video.py` 使用项目锁，拒绝修改运行中的任务；修改过的画面必须取得对应新版本的审核结论才可发布。产物与审核记录在 `video_projects/studio-938eef858abc/output/human_polish/`，最终视频为该项目 `output/final.mp4`，管理员登录后可在个人作品中查看。自动修正的原始版本也保留，成片属于“真实模型生成后人工精修”，不宣称初次自动生成即可达到同等画质。
+
+针对实测问题还改进了通用生成约束：数量图使用同一比例尺、标签与公式分区、结果不重复叠放；混合运算旁白须讲明先后顺序。通用字幕按实际字形宽度换行，保留数字与标点，独立两秒渲染已验证“12”不会被拆行。网页默认关闭额外字幕轨显示，避免与画面内字幕重复；仍提供可选字幕与WebVTT。
+
+公网验收命令：`/data/code2vedio-browser-venv/bin/python deploy/check_live_video.py --job 938eef858abc`。已验证站内登录、90秒1080p播放、WebVTT、鉴权Range下载、桌面和手机布局；临时Bearer调用密钥能轮询该任务、读取usage和下载结果，撤销后返回401。报告与截图在 `.tmp/live-video-check/`。
+
+此任务的21次调用全部返回实际usage：输入133530 token（其中缓存28672），输出32171 token。包含失败生成、自动纠错及精修后审核，按已核验官方价目估算4.391932元，任务级向上取分为4.40元。此数不含独立连通性探针、渲染、存储或带宽，以服务商实际账单为准；站内未扣余额。逐次原始记录为项目 `usage.jsonl`，汇总为 `.tmp/live-video-check/938eef858abc-cost.json`。

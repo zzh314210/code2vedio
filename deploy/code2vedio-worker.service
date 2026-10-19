@@ -1,0 +1,30 @@
+[Unit]
+Description=Frame Studio private video worker
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=admin1
+Group=admin1
+SupplementaryGroups=docker
+WorkingDirectory=/data/code2vedio
+Environment=PYTHONUTF8=1
+Environment=PYTHONIOENCODING=utf-8
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/data/code2vedio/.venv/bin/python -u web/server.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/data/code2vedio/private /data/code2vedio/video_projects
+PrivateTmp=true
+MemoryMax=1400M
+CPUQuota=150%
+
+[Install]
+WantedBy=multi-user.target

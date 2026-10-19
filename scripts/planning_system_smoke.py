@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 from fastapi.testclient import TestClient
+from worker_test_support import WorkerClient
+import os
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'src'))
 from configuration import resolve_config
@@ -45,6 +47,7 @@ server.settings=copy.deepcopy(config);server.settings['vision']['api_key']='fake
 def worker(identity,project,prompt,config,materials,resume=False):
  try:
   server.update_job(identity,status='running')
+  config=copy.deepcopy(config);config['tts']={'provider':'none'};config['vision']['enabled']=False;config['teaching_research']['enabled']=False
   pipe=VideoPipeline(prompt,config,project/'output',project=project,materials=materials,resume=resume,planning_gate=lambda stage,doc:PlanningReview(project).checkpoint(stage,doc))
   pipe.run(stop_after='audio')
   server.update_job(identity,status='complete',message='audio reached')
@@ -52,7 +55,8 @@ def worker(identity,project,prompt,config,materials,resume=False):
  except Exception as e:server.update_job(identity,status='failed',message=str(e));raise
 
 with tempfile.TemporaryDirectory() as temp,patch.object(server,'STUDIO_PROJECTS',Path(temp)),patch.object(server,'work',worker),patch('pipeline.ModelGateway',Gateway):
- client=TestClient(server.app)
+ private=Path(temp)/'private';private.mkdir();(private/'worker.key').write_bytes(os.urandom(32));server.PRIVATE=private
+ client=WorkerClient(server)
  response=client.post('/api/jobs',data={'prompt':'演示水位的变化过程','style':'studio_sketch','duration':30})
  assert response.status_code==202,response.text
  identity=response.json()['id'];base=f'/api/jobs/{identity}';project=Path(server.jobs[identity]['project'])

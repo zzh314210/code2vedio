@@ -92,6 +92,9 @@ def load_config(filename=None, overrides=None, resolved=True):
             env_name = prefix + "_" + key.upper()
             if env_name in os.environ:
                 config[role][key] = "${" + env_name + "}" if key == "api_key" else os.environ[env_name]
+        # Short names are the primary user-facing deployment settings; retain legacy aliases.
+        if role in ("text", "vision") and role + "_api_key" in os.environ:
+            config[role]["api_key"] = "${" + role + "_api_key}"
     config = merge(config, overrides or {})
     return resolve_config(config) if resolved else config
 
