@@ -9,7 +9,7 @@ with sync_playwright() as p:
  browser=p.chromium.launch(headless=True)
  context=browser.new_context(viewport={'width':1440,'height':1050})
  page=context.new_page();errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
- page.goto(base,wait_until='networkidle')
+ page.goto(base+'/#login',wait_until='networkidle')
  page.locator('[name=username]').fill(credentials['USERNAME']);page.locator('[name=password]').fill(credentials['PASSWORD'])
  page.get_by_role('button',name='登录工作空间').click()
  page.get_by_role('heading',name='让想法，成为画面。').wait_for()

@@ -42,6 +42,26 @@ sudo nginx -t && sudo systemctl reload nginx
 阿里TTS的免费额度有期限及上限，因此本次测试继续使用已实测的免费Edge语音；edge-tts 7.3.1已解决旧版本403。站内自动扣费保持关闭。
 
 
+## 访客入口与交互更新（2026-10-19）
+
+首页直接展示创作面板，无浏览器 Basic Auth 弹窗，也不强制先进入登录页。访客可填写需求、参考链接、素材关键词，选择风格、时长、横竖屏与审核方式；生成、上传、搜索读取素材、配音及个人页面在实际操作时引导登录。公开的是创作界面和风格示意，个人作品、素材、余额、配置、调用凭据及其 API 仍需身份验证。
+
+登录使用 `#login` / `#register`，提供返回创作面板入口；直接访问个人页面会在登录成功后返回原目标。登录期间保留同一创作组件，需求、视频参数、关键词和拖入的本地文件留在内存，登录后可继续编辑，**不会自动提交生成任务**。刷新或关闭页面不保留草稿；退出或会话失效会清空当前工作区，避免其他人看到前一账户内容。浏览器 localStorage/sessionStorage 不存储草稿或密钥。
+
+界面以靛蓝突出主要操作，以绿色、琥珀色、红色区分成功、待配置与错误；保留原有双栏布局。增加三步创作提示、预览区风格切换、参数摘要、桌面随滚动的预览卡、作品关键词搜索及状态筛选。素材区明确区分搜索候选、读取正文与选为本片参考，显示来源、读取状态和选用数量。增加键盘焦点、轻量过渡、减少动态效果支持，并适配320/390/768像素宽度。
+
+本次构建及公网回归：
+
+```bash
+npm --prefix web run build
+/data/code2vedio-browser-venv/bin/python deploy/check_guest.py
+C2V_CHECK_URL=https://vedio.myaihub.asia /data/code2vedio-browser-venv/bin/python deploy/check_users.py
+/data/code2vedio-browser-venv/bin/python deploy/check_models.py
+/data/code2vedio-browser-venv/bin/python deploy/check_live_video.py --job 938eef858abc
+```
+
+访客验收覆盖匿名访问、操作时登录、草稿与文件保留、私有页面返回、作品搜索筛选、退出清理及匿名 API 拒绝访问；截图与报告在 `.tmp/guest-check/`。其余脚本验证免费真实素材搜索与音色试听、模拟模型列表选择、已有真实视频播放下载和临时 API 凭据撤销。本轮回归不新建视频、不调用付费模型、不修改计费开关。
+
 ## 已有验收
 
 Go测试覆盖密码/会话、注册权限、账户停用、API凭据权限、加密存储、跨用户配置、充值幂等与并发、价格缓存/峰谷、余额预占、用量结算幂等、未知用量保留及任务配置持久化。Python测试覆盖签名边界、上传、作品/视频/规划/素材隔离、重启恢复、真实规划关卡及编辑、usage记录、DNS内网阻断。浏览器脚本 `deploy/check_users.py` 覆盖真实前后端、移动布局、搜索与试听。

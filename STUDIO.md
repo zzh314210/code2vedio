@@ -18,7 +18,9 @@ powershell -ExecutionPolicy Bypass -File scripts/start_studio.ps1 -Install
 
 ## Linux 网页部署
 
-本机部署与运维说明见 [`deploy/README.md`](deploy/README.md)，包含 systemd 常驻服务、HTTPS 反向代理、访问认证和 Docker 隔离渲染。公网域名需通过 `C2V_ALLOWED_ORIGINS` 显式加入允许来源，例如 `https://vedio.myaihub.asia`；多个来源用逗号分隔。未设置时仍仅允许原有本机工作台来源。
+当前公网版采用 Go 用户后端与 Python 私有渲染 Worker，部署和账户说明以 [`deploy/USER_SYSTEM.md`](deploy/USER_SYSTEM.md) 为准；原单机部署记录见 [`deploy/README.md`](deploy/README.md)。公网首页可直接浏览创作面板并填写需求，实际操作时再登录，同一页面内的登录往返保留草稿。个人作品、素材、余额与加密保存的模型配置按用户隔离。
+
+公网域名需通过 `C2V_ALLOWED_ORIGINS` 显式加入允许来源，例如 `https://vedio.myaihub.asia`；多个来源用逗号分隔。未设置时仍仅允许原有本机工作台来源。上文 Windows 单机版的内存配置说明不适用于 Go 多用户部署。
 
 ## 模型与配音
 

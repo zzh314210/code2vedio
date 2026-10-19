@@ -9,7 +9,7 @@ credentials=dict(line.split('=',1) for line in (ROOT/'private/admin-access.txt')
 artifacts=ROOT/'.tmp/live-video-check';artifacts.mkdir(parents=True,exist_ok=True)
 with sync_playwright() as p:
  browser=p.chromium.launch(headless=True);context=browser.new_context(viewport={'width':1440,'height':1000});page=context.new_page()
- page.goto(base,wait_until='networkidle');page.locator('[name=username]').fill(credentials['USERNAME']);page.locator('[name=password]').fill(credentials['PASSWORD'])
+ page.goto(base+'/#login',wait_until='networkidle');page.locator('[name=username]').fill(credentials['USERNAME']);page.locator('[name=password]').fill(credentials['PASSWORD'])
  page.get_by_role('button',name='登录工作空间').click();page.get_by_role('heading',name='让想法，成为画面。').wait_for()
  response=context.request.get(base+'/api/jobs/'+args.job);assert response.status==200
  job=response.json();assert job['status']=='complete',job['status'];assert job['review']['passed'],job['review']

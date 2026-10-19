@@ -10,7 +10,7 @@ with sync_playwright() as pw:
  browser=pw.chromium.launch(headless=True)
  context=browser.new_context(viewport={'width':1440,'height':1000})
  page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
- response=page.goto(base,wait_until='networkidle');assert response.status==200
+ response=page.goto(base+'/#login',wait_until='networkidle');assert response.status==200
  assert page.get_by_role('heading',name='欢迎回来').is_visible()
  assert context.request.get(base+'/api/jobs').status==401
  page.locator('input[name=username]').fill(credentials['USERNAME']);page.locator('input[name=password]').fill(credentials['PASSWORD'])
@@ -62,7 +62,7 @@ with sync_playwright() as pw:
   page.locator('.mobile-nav').get_by_role('button',name='新建视频',exact=True).click()
  assert page.evaluate('localStorage.length===0 && sessionStorage.length===0')
  assert not errors,errors
- page.get_by_role('button',name='退出登录').click();page.get_by_role('heading',name='欢迎回来').wait_for()
+ page.get_by_role('button',name='退出登录').click();page.get_by_role('button',name='登录',exact=True).wait_for()
  assert context.request.get(base+'/api/jobs').status==401
  browser.close()
 print('PASS: public login page; real Go login, panel, free voice sample, model settings, balance, admin, API key permissions/revocation, live source search, mobile layouts, logout; no paid API calls.')
