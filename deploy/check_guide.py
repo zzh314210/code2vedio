@@ -30,6 +30,8 @@ with sync_playwright() as p:
     def step(index):
         expect(page.locator('.driver-popover-title')).to_have_text(TITLES[index])
         expect(page.locator('.driver-popover-progress-text')).to_have_text(f'{index+1} / 6')
+        expect(page.locator('.guide-step-number')).to_have_text(f'{index+1:02}')
+        expect(page.locator('.guide-action strong')).to_be_visible()
         page.wait_for_function('''() => {
             const b=document.querySelector('.studio-guide')?.getBoundingClientRect();
             return b && b.x>=0 && b.y>=0 && b.right<=innerWidth+1 && b.bottom<=innerHeight+1;
@@ -37,6 +39,13 @@ with sync_playwright() as p:
         assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
         expect(page.locator('.driver-active-element')).to_have_count(1)
         expect(page.locator('.driver-active-element')).to_be_visible()
+        assert page.locator('.driver-active-element').evaluate('el=>getComputedStyle(el).outlineWidth')=='3px'
+        page.wait_for_function('''() => {
+            if(innerWidth>700)return true;
+            const card=document.querySelector('.studio-guide').getBoundingClientRect();
+            const target=document.querySelector('.driver-active-element').getBoundingClientRect();
+            return target.top>=10 && target.bottom+12<=card.top;
+        }''')
 
     try:
         page.goto(BASE,wait_until='networkidle')
@@ -72,8 +81,7 @@ with sync_playwright() as p:
             page.get_by_role('button',name='使用引导',exact=True).click()
             for i in range(6):
                 step(i)
-                if i in (0,3,5):
-                    page.screenshot(path=str(ARTIFACTS/f'{width}-step-{i+1}.png'))
+                page.screenshot(path=str(ARTIFACTS/f'{width}-step-{i+1}.png'))
                 # Keyboard focus must stay in the guide.
                 for _ in range(5):
                     page.keyboard.press('Tab')

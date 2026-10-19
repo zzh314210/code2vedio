@@ -16,6 +16,8 @@ const remember=(key:string)=>{
 };
 const visibleTarget=(selector:string)=>()=>
   Array.from(document.querySelectorAll(selector)).find(el=>el.getBoundingClientRect().width>0) || document.querySelector('#prompt')!;
+const responsiveTarget=(desktop:string,mobile:string)=>()=>
+  document.querySelector(window.innerWidth<=700?mobile:desktop)!;
 
 export default function StudioGuide({userId,enabled,ready}:{userId?:string;enabled:boolean;ready:boolean}){
   const instance=useRef<Driver|null>(null);
@@ -42,6 +44,8 @@ export default function StudioGuide({userId,enabled,ready}:{userId?:string;enabl
       if(cleaned)return;
       cleaned=true;
       document.removeEventListener('keydown',trapTab,true);
+      window.removeEventListener('resize',fitCompact);
+      document.body.style.removeProperty('--guide-accent');
       remember(key);instance.current=null;closeTour.current=null;
       requestAnimationFrame(()=>{
         if(!button.current?.getBoundingClientRect().width)return;
@@ -51,37 +55,82 @@ export default function StudioGuide({userId,enabled,ready}:{userId?:string;enabl
     };
     // driver.js may omit onDestroyed if closed before its first animation ends.
     const close=()=>{tour.destroy();cleanup()};
-    const steps:DriveStep[]=[
-      {element:visibleTarget('[data-guide="config"]'),popover:{title:'连接你的模型服务',description:userId
-        ?'打开「配置」，为内容生成和视觉审核分别填写接口地址、API Key 和模型名称。模型可手填或获取列表；获取密钥的入口也在配置页。'
-        :'先自由填写需求，实际操作时再登录。登录后打开「配置」，填写生成和视觉审核的接口地址、API Key、模型名称；页内有获取密钥的入口。'}},
-      {element:'#prompt',popover:{title:'说清你想做什么视频',description:'写下主题、面向谁、重点讲什么。没有思路时，可以点输入框下方的示例，再改成自己的需求。'}},
-      {element:'.source-heading',popover:{title:'补充素材，让内容更准确',description:'素材可选：上传文件，或搜索公开资料。搜索后先「读取正文」，再「选为本片参考」，才会用于大纲与分镜。'}},
-      {element:'.creator-voice',popover:{title:'选择风格和声音',description:'在「画面预览」上方切换风格；在这里选择配音并试听 2 秒。上方还可调整时长与横竖屏。'}},
-      {element:'.generate-button',popover:{title:'先确认内容，再制作',description:'点击「生成视频」后，默认先出大纲。可直接编辑或让 AI 修改，确认后再审分镜，最后制作成片。想自动完成，可勾选「免审核」。'}},
-      {element:visibleTarget('[data-guide="library"]'),popover:{title:'作品会保存在这里',description:'在「我的作品」继续确认大纲、分镜，查看制作进度，或预览和下载成片。以后想再看这份说明，回到创作页点击「使用引导」。'}},
+    const fitCompact=()=>requestAnimationFrame(()=>{
+      if(cleaned||window.innerWidth>700)return;
+      const popover=document.querySelector('.studio-guide');
+      const target=tour.getActiveElement();
+      if(!popover||!target)return;
+      const card=popover.getBoundingClientRect(),rect=target.getBoundingClientRect();
+      const top=Math.max(14,(card.top-24-rect.height)/2);
+      window.scrollTo({top:Math.max(0,window.scrollY+rect.top-top),behavior:'instant'});
+      tour.refresh();
+    });
+    const content=[
+      {tone:'model',color:'#334155',label:'模型配置',title:'连接你的模型服务',element:visibleTarget('[data-guide="config"]'),
+        action:userId?'打开「配置」，填好这三项':'登录后打开「配置」',
+        detail:'<div class="guide-tokens"><span>接口地址</span><span>API Key</span><span>模型名称</span></div>',
+        note:'内容生成、视觉审核分别配置。模型可手填或从列表选择。'},
+      {tone:'brief',color:'#1d4ed8',label:'创作需求',title:'说清你想做什么视频',element:'#prompt',
+        action:'写主题、受众和讲解重点',
+        detail:'<p>例如：给初学者讲复利，用曲线对比单利与复利。</p>',
+        note:'也可以先点下方示例，再改成自己的需求。'},
+      {tone:'source',color:'#0f766e',label:'参考素材 · 可选',title:'补充素材，让内容更准确',element:responsiveTarget('.source-form','.source-query'),
+        action:'搜索后，再选为本片参考',
+        detail:'<div class="guide-flow"><span>搜索素材</span><b>→</b><span>读取正文</span><b>→</b><span>选为参考</span></div>',
+        note:'也可上传文件。只有选中的正文会加入本片参考。'},
+      {tone:'style',color:'#6d28d9',label:'风格与配音',title:'选择风格和声音',element:responsiveTarget('.output-fields','.creator-voice'),
+        action:'选好时长、横竖屏和配音',
+        detail:'<p>点击「视频配音」选择音色，先试听 2 秒。</p>',
+        note:'画面风格在「画面预览」上方切换。'},
+      {tone:'review',color:'#92400e',label:'确认与制作',title:'先确认内容，再制作',element:'.generate-button',
+        action:'点击生成，先看大纲',
+        detail:'<div class="guide-flow"><span>确认大纲</span><b>→</b><span>确认分镜</span><b>→</b><span>制作成片</span></div>',
+        note:'每一步都能修改。勾选「免审核」可自动完成。'},
+      {tone:'works',color:'#047857',label:'个人作品',title:'作品会保存在这里',element:visibleTarget('[data-guide="library"]'),
+        action:'到「我的作品」继续创作',
+        detail:'<div class="guide-tokens"><span>修改与确认</span><span>查看进度</span><span>预览下载</span></div>',
+        note:'想重看说明？回创作页点击「使用引导」。'},
     ];
+    const steps:DriveStep[]=content.map(item=>({element:item.element,popover:{title:item.title,
+      description:`<div class="guide-action"><span>重点操作</span><strong>${item.action}</strong></div><div class="guide-detail">${item.detail}</div><p class="guide-note">${item.note}</p>`}}));
     const tour=driver({
       steps,showProgress:true,progressText:'{{current}} / {{total}}',
       nextBtnText:'下一步',prevBtnText:'上一步',doneBtnText:'开始创作',
       animate:!window.matchMedia('(prefers-reduced-motion: reduce)').matches,
       smoothScroll:false,allowClose:true,disableActiveInteraction:true,
-      stagePadding:6,stageRadius:10,overlayColor:'#17233f',overlayOpacity:.45,
+      stagePadding:12,stageRadius:14,overlayColor:'#101b30',overlayOpacity:.64,
       popoverClass:'studio-guide',popoverOffset:12,
-      onHighlightStarted(){moving=true},
+      onHighlightStarted(_element,step){
+        moving=true;
+        const item=content.find(item=>item.title===step.popover?.title);
+        document.body.style.setProperty('--guide-accent',item?.color||'#1d4ed8');
+      },
       onHighlighted(_element,_step,{state}){
         moving=false;
         if(state.popover){
           state.popover.nextButton.disabled=false;
           state.popover.previousButton.disabled=tour.isFirstStep();
         }
+        fitCompact();
       },
-      onPopoverRender(popover){
+      onPopoverRender(popover,{state}){
+        const index=state.activeIndex||0,item=content[index];
+        popover.wrapper.dataset.tone=item.tone;
+        const label=document.createElement('div');
+        label.className='guide-step-label';
+        const number=document.createElement('span');
+        number.className='guide-step-number';number.textContent=String(index+1).padStart(2,'0');
+        const category=document.createElement('span');category.textContent=item.label;
+        label.append(number,category);popover.wrapper.prepend(label);
+        const progress=document.createElement('div');progress.className='guide-segments';progress.setAttribute('aria-hidden','true');
+        content.forEach((entry,i)=>{const segment=document.createElement('i');segment.style.setProperty('--segment-color',entry.color);segment.dataset.state=i===index?'current':i<index?'done':'upcoming';progress.append(segment)});
+        popover.description.after(progress);
         popover.closeButton.textContent='跳过';
         popover.closeButton.setAttribute('aria-label','跳过使用引导');
         popover.title.setAttribute('aria-live','polite');
         popover.nextButton.disabled=moving;
         popover.previousButton.disabled=moving||tour.isFirstStep();
+        fitCompact();
       },
       onNextClick(){if(moving)return;if(tour.isLastStep()){finished=true;close()}else tour.moveNext()},
       onPrevClick(){if(!moving)tour.movePrevious()},
@@ -89,6 +138,7 @@ export default function StudioGuide({userId,enabled,ready}:{userId?:string;enabl
     });
     instance.current=tour;closeTour.current=close;
     document.addEventListener('keydown',trapTab,true);
+    window.addEventListener('resize',fitCompact);
     tour.drive();
   },[userId]);
 
