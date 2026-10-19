@@ -1,4 +1,5 @@
 """Model configuration interaction checks; catalogs are mocked, no paid calls or saved changes."""
+from browser_helpers import dismiss_guide, assert_safe_storage
 import json, os
 from pathlib import Path
 from playwright.sync_api import sync_playwright
@@ -13,6 +14,7 @@ with sync_playwright() as p:
  page.locator('[name=username]').fill(credentials['USERNAME']);page.locator('[name=password]').fill(credentials['PASSWORD'])
  page.get_by_role('button',name='登录工作空间').click()
  page.get_by_role('heading',name='让想法，成为画面。').wait_for()
+ dismiss_guide(page)
  assert context.request.get(base+'/api/voices').status==200
  page.get_by_role('button',name='配置',exact=True).click()
  page.get_by_role('heading',name='模型配置',exact=True).wait_for()

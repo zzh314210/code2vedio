@@ -3,6 +3,7 @@
 Uses an existing administrator session only to verify return navigation. Never
 submits a job or changes model settings, and leaves no test credentials active.
 """
+from browser_helpers import dismiss_guide, assert_safe_storage
 import json
 import os
 from pathlib import Path
@@ -30,6 +31,7 @@ with sync_playwright() as p:
         page.get_by_role('button', name='登录工作空间', exact=True).click()
         expect(page.locator('.auth-page')).to_have_count(0)
         expect(page.get_by_role('button', name='退出登录', exact=True)).to_be_visible()
+        dismiss_guide(page)
 
     def back():
         page.get_by_role('button', name='返回创作面板', exact=True).click()
@@ -149,7 +151,7 @@ with sync_playwright() as p:
             back()
         page.emulate_media(reduced_motion='reduce')
         assert page.locator('.theme-card').first.evaluate('el=>getComputedStyle(el).transitionDuration') == '1e-05s'
-        assert page.evaluate('localStorage.length===0 && sessionStorage.length===0')
+        assert_safe_storage(page)
         assert not errors, errors
         report={'guest_entry':True,'no_private_background_requests':True,'protected_endpoints':True,
                 'login_on_action':True,'draft_and_local_file_preserved':True,'private_route_return':True,

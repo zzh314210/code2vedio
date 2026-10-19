@@ -1,4 +1,5 @@
 """Browser acceptance of the real Go user panel and Python worker."""
+from browser_helpers import dismiss_guide, assert_safe_storage
 import os,json,time
 from pathlib import Path
 from playwright.sync_api import sync_playwright
@@ -16,6 +17,7 @@ with sync_playwright() as pw:
  page.locator('input[name=username]').fill(credentials['USERNAME']);page.locator('input[name=password]').fill(credentials['PASSWORD'])
  page.get_by_role('button',name='登录工作空间').click()
  page.get_by_role('heading',name='让想法，成为画面。').wait_for()
+ dismiss_guide(page)
  page.screenshot(path=str(artifacts/'desktop-create.png'),full_page=True)
  page.get_by_role('button',name='试试复利讲解').click();assert page.locator('#prompt').input_value()
  page.get_by_role('button',name='配置',exact=True).click();page.get_by_role('heading',name='模型配置',exact=True).wait_for()
@@ -60,7 +62,7 @@ with sync_playwright() as pw:
   assert not page.evaluate('document.documentElement.scrollWidth>innerWidth'),('settings overflow',width)
   page.screenshot(path=str(artifacts/f'settings-{width}.png'),full_page=True)
   page.locator('.mobile-nav').get_by_role('button',name='新建视频',exact=True).click()
- assert page.evaluate('localStorage.length===0 && sessionStorage.length===0')
+ assert_safe_storage(page)
  assert not errors,errors
  page.get_by_role('button',name='退出登录').click();page.get_by_role('button',name='登录',exact=True).wait_for()
  assert context.request.get(base+'/api/jobs').status==401

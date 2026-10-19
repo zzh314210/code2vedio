@@ -1,3 +1,4 @@
+from browser_helpers import dismiss_guide, assert_safe_storage
 import os
 from pathlib import Path
 from playwright.sync_api import sync_playwright
@@ -8,6 +9,7 @@ with sync_playwright() as p:
  context=browser.new_context(viewport={'width':1440,'height':1100})
  page=context.new_page();page.goto(base+'/#login',wait_until='networkidle')
  page.locator('[name=username]').fill(credentials['USERNAME']);page.locator('[name=password]').fill(credentials['PASSWORD']);page.get_by_role('button',name='登录工作空间').click()
+ dismiss_guide(page)
  page.get_by_role('heading',name='让想法，成为画面。').wait_for()
  page.get_by_role('button',name='预览 考公行测·牛吃草问题：看懂存量、增量与净消耗（原创手绘样片）',exact=True).click()
  video=page.locator('video');video.wait_for()
