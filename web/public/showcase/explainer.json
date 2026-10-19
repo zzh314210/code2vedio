@@ -1,0 +1,8 @@
+{
+  "template": "explainer",
+  "sha256": "9bacb4e7186535142078786f2b466632c1800440d5272266af9bd8de23da7a29",
+  "duration": 60.0,
+  "review_note": "60秒月相图解：固定太阳光方向，按真实照明投影展示新月、上弦、满月和下弦，区分月相与月食。已核对几何、旁白及逐幕画面，并人工精修；1080p成片通过完整解码。",
+  "project": "showcase-explainer-v7",
+  "review": "accepted after actual film inspection"
+}

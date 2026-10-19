@@ -1,0 +1,92 @@
+[
+  {
+    "id": "edit-product",
+    "title": "从产品讲解中，留下完整卖点",
+    "description": "96 秒演示素材精剪为 59 秒，删除闲聊，保留操作说明与模型费用条件。真实流程生成，人工校对选段与字幕；素材为自制演示及合成旁白，非直播实录。",
+    "credit": "本站原创产品演示 · 2026-10-19",
+    "license": "本站原创示例",
+    "source": "/showcase/SOURCES.md",
+    "duration": 59,
+    "kind": "editing"
+  },
+  {
+    "id": "edit-gaming",
+    "title": "连续过弯，留下流畅的一段",
+    "description": "从70秒赛车录像中选择约27秒连续驾驶片段，去掉加载，保留完整游戏界面与原声。使用原生1080p授权素材；这是基准测试录像剪辑演示，不是竞技集锦。",
+    "credit": "SuperTux Kart-Autoren · 本站选段、轻聚焦及响度处理",
+    "license": "CC BY-SA 4.0",
+    "source": "/showcase/SOURCES.md",
+    "duration": 27,
+    "kind": "editing"
+  },
+  {
+    "id": "word_story",
+    "title": "单词奇遇记",
+    "description": "60秒原创记忆故事：香蕉船长离船上岛，理解 abandon 的常见词义，再用例句与搭配巩固。已核对画面、拼写、词义与时间线；人工补充搭配和提问后2秒的答案揭晓。故事只是记忆联想，不是词源。",
+    "credit": "实际制作示例 · 2026-10-19",
+    "license": "详见示例素材来源说明",
+    "source": "/showcase/SOURCES.md",
+    "duration": 60,
+    "kind": "creation"
+  },
+  {
+    "id": "history_map",
+    "title": "历史地图故事",
+    "description": "真实地图串联巴黎、北京与上海，区分5月与6月事件；人工调整结尾考点和问答，逐帧检查地点、字幕及两秒回忆停顿。",
+    "credit": "实际制作示例 · 2026-10-19",
+    "license": "详见示例素材来源说明",
+    "source": "/showcase/SOURCES.md",
+    "duration": 90,
+    "kind": "creation"
+  },
+  {
+    "id": "documentary",
+    "title": "微纪录片",
+    "description": "NASA真实月面照片与撞击图解连贯叙事，地球与月球同屏对比；人工调整取景、图解和标签，检查来源、字幕、几何与完整成片。",
+    "credit": "实际制作示例 · 2026-10-19",
+    "license": "详见示例素材来源说明",
+    "source": "/showcase/SOURCES.md",
+    "duration": 60,
+    "kind": "creation"
+  },
+  {
+    "id": "math_visual",
+    "title": "数学看得见",
+    "description": "60秒从割线移动到切线，使用精确坐标与斜率；人工逐幕核对推导、非零条件、回忆停顿和答案，经过画面调整及重新审核。",
+    "credit": "实际制作示例 · 2026-10-19",
+    "license": "详见示例素材来源说明",
+    "source": "/showcase/SOURCES.md",
+    "duration": 60,
+    "kind": "creation"
+  },
+  {
+    "id": "notes",
+    "title": "笔记放映室",
+    "description": "将一份导数笔记串成3分钟复盘：知识地图、动态函数图、易混点，以及三道带停顿和答案的回忆题。已逐章核对数学事实、字幕与最终画面，并人工精修。",
+    "credit": "实际制作示例 · 2026-10-19",
+    "license": "详见示例素材来源说明",
+    "source": "/showcase/SOURCES.md",
+    "duration": 180,
+    "kind": "creation"
+  },
+  {
+    "id": "product",
+    "title": "产品种草",
+    "description": "30秒真实界面演示：填写想法、选择风格、查看预览。人工核对实际页面、旁白与标签，精修截图位置和留白；这是产品操作介绍，并非直播带货实录。",
+    "credit": "实际制作示例 · 2026-10-19",
+    "license": "详见示例素材来源说明",
+    "source": "/showcase/SOURCES.md",
+    "duration": 30,
+    "kind": "creation"
+  },
+  {
+    "id": "explainer",
+    "title": "知识讲解",
+    "description": "60秒月相图解：固定太阳光方向，按真实照明投影展示新月、上弦、满月和下弦，区分月相与月食。已核对几何、旁白及逐幕画面，并人工精修；1080p成片通过完整解码。",
+    "credit": "实际制作示例 · 2026-10-19",
+    "license": "详见示例素材来源说明",
+    "source": "/showcase/SOURCES.md",
+    "duration": 60,
+    "kind": "creation"
+  }
+]

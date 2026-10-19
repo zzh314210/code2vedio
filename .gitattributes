@@ -1,0 +1,2 @@
+# Preserve upstream Google Noto SVG bytes and their recorded SHA256 hashes.
+templates/assets/noto/*.svg -whitespace

@@ -15,6 +15,22 @@ from pathlib import Path
 _project_locks = threading.local()
 
 
+class RenderInfrastructureError(RuntimeError):
+    """A host/resource failure which model-generated code cannot repair."""
+
+
+def _bounded_encoder_arguments(arguments, working):
+    arguments = list(arguments)
+    if arguments[1:3] != ["-m", "manim"]:
+        return arguments
+    # Manim 0.21's serial encoder has an unbounded frame queue. Two in-flight
+    # encoders enable its supported backpressure; each holds at most two
+    # pending frames, including when a long 1080p animation outruns encoding.
+    config_file = validate_output(working, "render-worker.cfg")
+    config_file.write_text("[CLI]\nmax_inflight_encoders = 2\nencoder_queue_size = 2\n", encoding="utf-8")
+    return arguments[:3] + ["--config_file", str(config_file)] + arguments[3:]
+
+
 def validate_output(project, output):
     root = Path(project).resolve(strict=True)
     if not root.is_dir():
@@ -101,15 +117,21 @@ def _container_scene(project, script):
     return destination
 
 
-def _run(arguments, directory, environment, timeout):
+def _run(arguments, directory, environment, timeout, *, container=False):
     try:
         result = subprocess.run(arguments, cwd=directory, env=environment, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired as failure:
-        raise RuntimeError("Render exceeded its timeout") from failure
+        raise RenderInfrastructureError("渲染超时，请稍后重试或缩短视频；没有额外调用模型修改代码。") from failure
     except OSError as failure:
-        raise RuntimeError("Render executor could not start") from failure
+        raise RenderInfrastructureError("渲染服务未能启动，请稍后重试。") from failure
     if result.returncode:
-        raise RuntimeError((result.stderr or result.stdout or "Render failed")[-10000:])
+        detail = (result.stderr or result.stdout or "Render failed")[-10000:]
+        message = f"Render exited with code {result.returncode}:\n{detail}"
+        if result.returncode in (-9, 137) or any(marker in detail for marker in ("MemoryError", "Cannot allocate memory", "No space left on device", "Resource temporarily unavailable")):
+            raise RenderInfrastructureError("渲染资源不足或进程被终止，请稍后重试；没有额外调用模型修改代码。\n" + message)
+        if container and result.returncode in (125, 126, 127):
+            raise RenderInfrastructureError("渲染容器启动失败，请稍后重试。\n" + message)
+        raise RuntimeError(message)
     return result.stdout
 
 
@@ -121,6 +143,7 @@ def render_command(arguments, project, directory, settings, timeout):
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("Render timeout must be positive and finite")
     environment = render_environment(root)
+    arguments = _bounded_encoder_arguments(arguments, working)
     backend = settings.get("backend", "trusted")
     if backend == "trusted":
         warnings.warn("Trusted local rendering is NOT a security sandbox", RuntimeWarning, stacklevel=2)
@@ -129,7 +152,7 @@ def render_command(arguments, project, directory, settings, timeout):
         raise ValueError("Unknown render backend; expected trusted or docker")
     docker = shutil.which("docker")
     if not docker:
-        raise RuntimeError("Docker is required for isolated rendering; local fallback is forbidden")
+        raise RenderInfrastructureError("Docker is required for isolated rendering; local fallback is forbidden")
     if len(arguments) < 4 or list(arguments[1:3]) != ["-m", "manim"]:
         raise ValueError("Docker executor accepts only python -m manim commands")
     image = settings.get("image", "code2video-worker:0.1")
@@ -164,7 +187,7 @@ def render_command(arguments, project, directory, settings, timeout):
         command.extend(["--env", key + "=" + value])
     command.extend([image, "python", *converted])
     try:
-        return _run(command, working, environment, timeout)
+        return _run(command, working, environment, timeout, container=True)
     finally:
         try:
             subprocess.run([docker, "rm", "--force", name], capture_output=True, timeout=30, env=environment)

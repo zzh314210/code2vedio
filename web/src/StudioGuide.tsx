@@ -4,22 +4,27 @@ import {driver,type Driver,type DriveStep} from 'driver.js';
 import 'driver.js/dist/driver.css';
 import './guide.css';
 
+// A per-account, per-site cookie survives sign-outs and refreshes. Clearing
+// site cookies intentionally allows onboarding again; no draft or key is stored.
 const seenInMemory=new Set<string>();
-const storageKey=(id:string)=>`frame.guide.v1.${id}`;
+const storageKey=(id:string)=>`frame.guide.seen.${location.port||'default'}.${id}`;
+const cookieSeen=(key:string)=>document.cookie.split(';').some(part=>part.trim()===`${encodeURIComponent(key)}=1`);
 const hasSeen=(key:string)=>{
-  if(seenInMemory.has(key))return true;
-  try{return localStorage.getItem(key)==='seen'}catch{return false}
+  try{return cookieSeen(key)||seenInMemory.has(key)}catch{return seenInMemory.has(key)}
 };
 const remember=(key:string)=>{
+  try{
+    document.cookie=`${encodeURIComponent(key)}=1; Path=/; Max-Age=34560000; SameSite=Lax${location.protocol==='https:'?'; Secure':''}`;
+    if(cookieSeen(key))return;
+  }catch{/* A privacy-restricted browser still gets a working manual guide. */}
   seenInMemory.add(key);
-  try{localStorage.setItem(key,'seen')}catch{/* The guide also works when storage is unavailable. */}
 };
 const visibleTarget=(selector:string)=>()=>
   Array.from(document.querySelectorAll(selector)).find(el=>el.getBoundingClientRect().width>0) || document.querySelector('#prompt')!;
 const responsiveTarget=(desktop:string,mobile:string)=>()=>
   document.querySelector(window.innerWidth<=700?mobile:desktop)!;
 
-export default function StudioGuide({userId,enabled,ready}:{userId?:string;enabled:boolean;ready:boolean}){
+export default function StudioGuide({userId,enabled,ready,variant='create'}:{userId?:string;enabled:boolean;ready:boolean;variant?:'create'|'notes'}){
   const instance=useRef<Driver|null>(null);
   const closeTour=useRef<(()=>void)|null>(null);
   const button=useRef<HTMLButtonElement>(null);
@@ -46,6 +51,7 @@ export default function StudioGuide({userId,enabled,ready}:{userId?:string;enabl
       document.removeEventListener('keydown',trapTab,true);
       window.removeEventListener('resize',fitCompact);
       document.body.style.removeProperty('--guide-accent');
+      document.body.classList.remove('studio-guide-open');
       remember(key);instance.current=null;closeTour.current=null;
       requestAnimationFrame(()=>{
         if(!button.current?.getBoundingClientRect().width)return;
@@ -65,9 +71,9 @@ export default function StudioGuide({userId,enabled,ready}:{userId?:string;enabl
       window.scrollTo({top:Math.max(0,window.scrollY+rect.top-top),behavior:'instant'});
       tour.refresh();
     });
-    const content=[
+    let content=[
       {tone:'model',color:'#334155',label:'模型配置',title:'连接你的模型服务',element:visibleTarget('[data-guide="config"]'),
-        action:userId?'打开「配置」，填好这三项':'登录后打开「配置」',
+        action:userId?'打开「模型配置」，填好这三项':'登录后打开「模型配置」',
         detail:'<div class="guide-tokens"><span>接口地址</span><span>API Key</span><span>模型名称</span></div>',
         note:'内容生成、视觉审核分别配置。模型可手填或从列表选择。'},
       {tone:'brief',color:'#1d4ed8',label:'创作需求',title:'说清你想做什么视频',element:'#prompt',
@@ -89,7 +95,13 @@ export default function StudioGuide({userId,enabled,ready}:{userId?:string;enabl
       {tone:'works',color:'#047857',label:'个人作品',title:'作品会保存在这里',element:visibleTarget('[data-guide="library"]'),
         action:'到「我的作品」继续创作',
         detail:'<div class="guide-tokens"><span>修改与确认</span><span>查看进度</span><span>预览下载</span></div>',
-        note:'想重看说明？回创作页点击「使用引导」。'},
+        note:'想重看说明？回创作页点击「一分钟使用引导」。'},
+    ];
+    if(variant==='notes')content=[
+      {...content[2],label:'学习笔记',title:'先上传你自己的笔记',element:visibleTarget('.material-fields'),action:'上传 TXT、Markdown 或文字 PDF',detail:'<div class="guide-tokens"><span>自己的笔记</span><span>一章一个主题</span></div>',note:'不支持直接识别扫描件。长篇笔记建议分章，先选最想复盘的一部分。'},
+      {...content[1],label:'复盘重点',title:'告诉老师，哪里最容易忘',element:visibleTarget('.creation-prompt-block'),action:'补充重点；也可以保留默认要求',detail:'<div class="guide-flow"><span>知识地图</span><b>→</b><span>重点串讲</span><b>→</b><span>回忆小测</span></div>',note:'AI 以你的笔记为依据；不清楚的内容会在大纲里提醒你确认。'},
+      {...content[4],title:'先看大纲，再开始制作',action:'选好配音与时长，点击生成',note:'默认先确认知识框架和分镜。确认准确后，再制作复盘视频。'},
+      content[5],
     ];
     const steps:DriveStep[]=content.map(item=>({element:item.element,popover:{title:item.title,
       description:`<div class="guide-action"><span>重点操作</span><strong>${item.action}</strong></div><div class="guide-detail">${item.detail}</div><p class="guide-note">${item.note}</p>`}}));
@@ -137,15 +149,25 @@ export default function StudioGuide({userId,enabled,ready}:{userId?:string;enabl
       onCloseClick:close,onDestroyStarted:close,onDestroyed:cleanup,
     });
     instance.current=tour;closeTour.current=close;
+    document.body.classList.add('studio-guide-open');
     document.addEventListener('keydown',trapTab,true);
     window.addEventListener('resize',fitCompact);
     tour.drive();
-  },[userId]);
+    remember(key);
+  },[userId,variant]);
 
   useEffect(()=>{
-    if(!userId||!enabled||!ready||hasSeen(storageKey(userId)))return;
+    if(!userId||!enabled||!ready)return;
+    const key=storageKey(userId);
+    // Migrate an existing seen flag once, then remove it so clearing cookies
+    // really does reset onboarding instead of being overridden by localStorage.
+    try{
+      const legacy=`frame.guide.v1.${userId}`;
+      if(localStorage.getItem(legacy)==='seen'){remember(key);localStorage.removeItem(legacy)}
+    }catch{/* Optional legacy migration. */}
+    if(hasSeen(key))return;
     const timer=setTimeout(()=>{
-      if(['','#create'].includes(location.hash)&&!document.querySelector('[role="dialog"]'))start();
+      if(!hasSeen(key)&&['','#create','#notes'].includes(location.hash)&&!document.querySelector('[role="dialog"]'))start();
     },350);
     return()=>clearTimeout(timer);
   },[userId,enabled,ready,start]);
@@ -156,5 +178,5 @@ export default function StudioGuide({userId,enabled,ready}:{userId?:string;enabl
   },[userId,enabled]);
 
   if(!enabled)return null;
-  return <button ref={button} type="button" className="guide-trigger" onClick={start}><CircleHelp size={17}/>使用引导</button>;
+  return <button ref={button} type="button" className="guide-trigger" onClick={start}><CircleHelp size={17}/>一分钟使用引导</button>;
 }

@@ -128,13 +128,16 @@ func (s *Store) saveTaskConfig(uid, job string, c PersonalConfig) error {
 
 // Both the web form and automation API converge on the same worker inputs.
 func (s *Server) prepareJob(w http.ResponseWriter, r *http.Request, c PersonalConfig) (PersonalConfig, string, bool) {
-	if r.Method != "POST" || r.URL.Path != "/api/jobs" {
+	parts := strings.Split(r.URL.Path, "/")
+	revision := len(parts) == 5 && parts[1] == "api" && parts[2] == "jobs" && parts[4] == "revisions"
+	if r.Method != "POST" || (r.URL.Path != "/api/jobs" && r.URL.Path != "/api/edits" && !revision) {
 		return c, "", true
 	}
 	var override *PersonalConfig
-	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+	if r.URL.Path == "/api/jobs" && strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		var d struct {
 			Prompt        string          `json:"prompt"`
+			TemplateID    string          `json:"template_id"`
 			Style         string          `json:"style"`
 			Duration      int             `json:"duration"`
 			Orientation   string          `json:"orientation"`
@@ -156,7 +159,7 @@ func (s *Server) prepareJob(w http.ResponseWriter, r *http.Request, c PersonalCo
 			d.Style = "studio_noir"
 		}
 		sourceIDs, _ := json.Marshal(d.SourceIDs)
-		form := url.Values{"prompt": {d.Prompt}, "style": {d.Style}, "duration": {strconv.Itoa(d.Duration)}, "orientation": {d.Orientation}, "auto_approve": {strconv.FormatBool(d.AutoApprove)}, "reference_urls": {strings.Join(d.ReferenceURLs, "\n")}, "source_ids": {string(sourceIDs)}}
+		form := url.Values{"template_id": {d.TemplateID}, "prompt": {d.Prompt}, "style": {d.Style}, "duration": {strconv.Itoa(d.Duration)}, "orientation": {d.Orientation}, "auto_approve": {strconv.FormatBool(d.AutoApprove)}, "reference_urls": {strings.Join(d.ReferenceURLs, "\n")}, "source_ids": {string(sourceIDs)}}
 		if len(d.SourceIDs) == 0 {
 			form.Set("source_ids", "[]")
 		}
@@ -183,7 +186,7 @@ func (s *Server) prepareJob(w http.ResponseWriter, r *http.Request, c PersonalCo
 		return c, "", false
 	}
 	public := c.public()
-	if !public.TextReady || !public.VisionReady || !public.SpeechReady {
+	if !public.TextReady || !public.VisionReady || ((r.URL.Path == "/api/jobs" || revision) && !public.SpeechReady) {
 		fail(w, 400, "请先完善 API 配置，或在请求 config 中传入完整配置。")
 		return c, "", false
 	}
@@ -200,5 +203,5 @@ type stringReadCloser struct{ *strings.Reader }
 func (s stringReadCloser) Close() error        { return nil }
 func readCloser(value string) stringReadCloser { return stringReadCloser{strings.NewReader(value)} }
 func bearerAllowed(path string) bool {
-	return path == "/api/config" || path == "/api/config/models" || path == "/api/jobs" || strings.HasPrefix(path, "/api/jobs/") || path == "/api/styles" || path == "/api/sources" || strings.HasPrefix(path, "/api/sources/") || path == "/api/voices" || strings.HasPrefix(path, "/api/voices/")
+	return path == "/api/edits" || strings.HasPrefix(path, "/api/edits/") || path == "/api/config" || path == "/api/config/models" || path == "/api/jobs" || strings.HasPrefix(path, "/api/jobs/") || path == "/api/styles" || path == "/api/sources" || strings.HasPrefix(path, "/api/sources/") || path == "/api/voices" || strings.HasPrefix(path, "/api/voices/")
 }

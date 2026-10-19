@@ -47,3 +47,5 @@
   .guide-flow { gap: 4px; }
   .guide-flow span { padding: 5px; font-size: 11px; }
 }
+
+@media(max-width:700px){body.studio-guide-open{padding-bottom:min(65dvh,520px)}}

@@ -1,62 +1,35 @@
-# vedio.myaihub.asia 部署
+# vedio.myaihub.asia 当前部署
 
-> 2026-10-19 已升级为 Go 用户面板 + 私有 Python worker。旧 Basic Auth 已移除。当前架构、账号凭据位置、计费开关和备份说明见 [USER_SYSTEM.md](USER_SYSTEM.md)，开放接口见 [API.md](API.md)。以下为首次部署的历史记录。
+正式站：https://vedio.myaihub.asia 。Go 用户/API服务 + 私有 Python worker + React/Vite；已移除旧浏览器 Basic Auth。产品说明及样例验收见 [PRODUCT_UPGRADE.md](PRODUCT_UPGRADE.md)，用户系统/计费见 [USER_SYSTEM.md](USER_SYSTEM.md)，接口见 [API.md](API.md)，剪辑依赖见 [EDITING.md](EDITING.md)。
 
-源代码：`/data/code2vedio`，基于 main 提交 `91058e66341401d388244cac4ce2e0c94ddb3e3d`，SSH remote 为 `git@github.com:zzh314210/code2vedio.git`。
+## 运行
 
-生产入口：https://vedio.myaihub.asia 。Nginx Basic Auth 用户名为 `studio`，随机密码在仓库外 `/data/code2vedio-access.txt`（0600）。站点与 API 均要求认证。配置面板的模型密钥只存后端内存，重启后需要重新输入；可通过被 gitignore 的私有配置持久化。
+- `code2vedio`：Go，`api/bin/frame-api`，127.0.0.1:7860，经Nginx HTTPS。
+- `code2vedio-worker`：Python，`private/worker.sock`，仅接受Go签名用户/任务。
+- `web/dist`：已构建网页与经过验收的公开样片。
+- Docker `code2video-worker:0.1`：Manim0.21、Pillow12.1、FFmpeg、Noto CJK；1CPU/1GiB、非root、禁网、只读根、单项目挂载。编码队列显式有界。
+- `.venv-editing` 与 `private/models`：固定版本 CPU/int8 Whisper、PySceneDetect、OpenTimelineIO，无需额外收费语音接口。
 
-## 运行环境
+后台任务在服务重启时会中断，必须先检查运行状态；待人工确认的任务可以继续。不要为了发布而终止用户正在制作的任务。
 
-Ubuntu 24.04、Python 3.12 虚拟环境 `.venv`、FFmpeg、Python 开发头文件、Cairo/Pango、Noto CJK 和 LaTeX。前端通过已有 `node:22.23-alpine` 镜像构建；系统 Node 18 仅用于已有运行时代码。
-
-`config.local.json` 从 Studio 示例生成，字体设为 `Noto Sans CJK SC`；`execution.backend=docker`，镜像 `code2video-worker:0.1`。单个渲染容器限制 1 CPU / 1 GiB，禁用网络，根文件系统只读，仅挂载当前视频项目。服务端线程池一次生产一个任务，避免与机器上其他站点争用内存。
-
-服务文件：`/etc/systemd/system/code2vedio.service`，仅监听 `127.0.0.1:7860`，启用开机启动和失败重启。允许的网页来源由 `C2V_ALLOWED_ORIGINS=https://vedio.myaihub.asia` 指定，保留原有本机来源校验，其他网页写入仍返回 403。
-
-Nginx 配置：`/etc/nginx/sites-available/vedio.myaihub.asia`。认证哈希：`/etc/nginx/code2vedio.htpasswd`。证书：`/etc/letsencrypt/live/vedio.myaihub.asia/`。Certbot 定时续期，deploy hook 在续期后检查并重载 Nginx。
-
-## 运维
+## 构建与发布
 
 ```bash
-sudo systemctl status code2vedio
-sudo journalctl -u code2vedio -n 100 --no-pager
-sudo systemctl restart code2vedio
-sudo nginx -t
-sudo systemctl reload nginx
+GOPATH=/data/code2vedio/.tmp/gopath GOCACHE=/data/code2vedio/.tmp/gocache .tmp/toolchain/go/bin/go -C api test ./...
+GOPATH=/data/code2vedio/.tmp/gopath GOCACHE=/data/code2vedio/.tmp/gocache .tmp/toolchain/go/bin/go -C api build -trimpath -o ../.tmp/release-frame-api .
+npm --prefix web run build -- --outDir ../.tmp/release-web --emptyOutDir
 ```
 
-作品、上传材料与规划记录保存在 `video_projects/`；检索库保存在 `references/`。备份时包含这些目录及私有配置，凭据文件独立保存，不提交 Git。服务重启后未完成生产任务标为失败，可从界面继续；等待规划审核的任务可恢复。
+先在隔离预览环境测试，再备份正式二进制、前端、私有配置与SQLite。将已验收产物替换到正式路径，仅重启 `code2vedio-worker` 与 `code2vedio`。通常无需改Nginx。发布后检查公开示例、登录、个人作品与受保护下载。
 
-## 更新
+运维：`systemctl status code2vedio code2vedio-worker`；日志：`journalctl -u code2vedio -u code2vedio-worker`。管理员初始凭据位于 `private/admin-access.txt`，不要复制到提交、日志或工单。
 
-先保存或提交本地部署修改（当前未推送），检查 `git status`，再以 SSH fetch 并评估新提交，不执行强制重置。依赖变动时更新 `.venv`。前端构建：
+## 数据及回滚
 
-```bash
-docker run --rm --user 1000:1000 --memory=768m --cpus=1 \
-  -e npm_config_cache=/tmp/npm-cache \
-  -v /data/code2vedio/web:/app -w /app node:22.23-alpine \
-  sh -c 'npm ci --registry=https://registry.npmjs.org --no-audit --no-fund && npm run build'
-```
+账号数据库与加密密钥位于 `private`，必须一起备份；SQLite使用backup API。作品在 `video_projects`，个人资料库在 `private/libraries`。用户密钥不进入前端、Git或公开样片。回滚时恢复同一份二进制/前端/代码快照，然后重启两项服务；若修改了用户数据格式，先检查兼容性。本次新增任务类型未改变旧作品归属。
 
-渲染镜像更新：`docker build -f Dockerfile.worker -t code2video-worker:0.1 .`。验证通过后重启工作台；`MemoryMax` 仅约束后端，Docker worker 使用自己的资源限制。
+发布前检查点为 `88945135ab2f75a265b8c296c862fb7b40df5b6d`。具体本次备份位置及部署结果见 `RELEASE_ACCEPTANCE.md`。
 
-此部署未配置或调用付费模型，也未安装可选 GPT-SoVITS/Whisper 权重。首次使用需在网页配置生成与视觉审核密钥；默认使用示例里的阿里云模型及 TTS，可用模型与额度由账号决定。
+## 隔离验收站
 
-## 验收
-
-```bash
-.venv/bin/python src/agent.py --doctor
-.venv/bin/python scripts/studio_api_smoke.py
-.venv/bin/python scripts/planning_system_smoke.py
-.venv/bin/python scripts/teaching_research_smoke.py
-.venv/bin/python scripts/docker_isolation_smoke.py
-.venv/bin/python deploy/check_render.py
-/data/code2vedio-browser-venv/bin/python deploy/check_site.py
-```
-
-浏览器验收使用独立环境 `/data/code2vedio-browser-venv` 的 Playwright/Chromium，读取仓库外访问凭据。截图和合成视频位于 `.tmp/deployment-check`、`.tmp/deployment-render`，不进入作品库或 Git。公网 Cloudflare 会阻止默认 Python User-Agent，HTTP 检查使用浏览器标识。所有验收均不请求付费模型。
-
-2026-10-18 验收完成：前端生产构建、Python doctor / pip check、Studio API、规划审核、素材证据测试、公网 HTTPS 浏览器、390/768 手机平板布局、密码认证、来源校验、生产权限下 1920×1080 / 30fps 中文 + LaTeX + Rough.js 渲染、双项目真实 Docker 隔离全部通过。工作台 systemd 服务已启用，部署完成时无异常重启。未进行真实模型生成和云 TTS 验证，因为尚未提供模型密钥。
-
-已构建渲染镜像 ID：`sha256:3d60b7107b6e3adeca2c558be1d9603fb1f259545bc60370c834bd6f056bdbef`。代码和部署修改只保留在本机工作区，未推送 GitHub。
+https://vedio.myaihub.asia:8443/ 使用独立 `.tmp/staging` 账号、配置和作品，Cookie为 `frame_preview_session`。`code2vedio-preview-api` / `code2vedio-preview-worker` 是临时systemd单元，不随服务器重启恢复，不能代替正式站。预览关闭时仅操作这两个单元和独立Nginx8443配置，不影响正式443。

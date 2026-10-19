@@ -81,17 +81,20 @@ def mux(video, audio, subtitles, destination, duration, subtitle_language="zho")
     ])
 
 
-def sample_frames(video, directory, count=6):
+def sample_frames(video, directory, count=6, positions=None):
     directory.mkdir(parents=True, exist_ok=True)
     duration = probe(video)["duration"]
+    positions = [duration * (index + 0.5) / count for index in range(count)] if positions is None else positions
+    if not 1 <= len(positions) <= 80 or any(not isinstance(t,(int,float)) or not math.isfinite(t) or not 0 <= t < duration for t in positions):
+        raise ValueError('Frame positions must be finite and inside the video')
     frames = []
-    for index in range(count):
+    for index,position in enumerate(positions):
         frame = directory / f"frame_{index:03}.jpg"
-        position = duration * (index + 0.5) / count
         run_command([ffmpeg_binary(), "-y", "-ss", str(position), "-i", str(video), "-frames:v", "1", "-vf", "scale=960:-2", str(frame)])
         if not frame.is_file():
             raise ValueError("FFmpeg 未能提取评审帧")
         frames.append(frame)
+    (directory/'timestamps.json').write_text(__import__('json').dumps(positions),encoding='utf8')
     return frames
 
 

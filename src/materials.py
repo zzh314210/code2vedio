@@ -112,7 +112,7 @@ def load_materials(filenames, prompt, settings, pages=None, references=None, cac
     context = "\n\n".join(f"[{chunk['source']}]\n{chunk['text']}" for chunk in selected)
     if visual_inputs:
         inventory = "\n".join(
-            f"- {item['name']} ({item['type']}, {item['role']}, {item['size']} bytes)"
+            f"- [{item['name']}] ({item['type']}, {item['role']}, {item['size']} bytes)"
             for item in visual_inputs
         )
         context += ("\n\n" if context else "") + "<external_media_inventory>\n" + inventory + "\n</external_media_inventory>"

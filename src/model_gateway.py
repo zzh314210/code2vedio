@@ -29,6 +29,14 @@ def image_url(filename):
     return f"data:{mime};base64," + base64.b64encode(file.read_bytes()).decode("ascii")
 
 
+class StructuredOutputError(ValueError):
+    """Keep the last parsed candidate for narrowly scoped, validated repairs."""
+    def __init__(self, message, candidate=None, validation_error=None):
+        super().__init__(message)
+        self.candidate = candidate
+        self.validation_error = validation_error
+
+
 class ModelGateway:
     def __init__(self, settings, role="text", on_request=None):
         validate_model(settings, role)
@@ -165,11 +173,14 @@ class ModelGateway:
     def json(self, prompt, validator=None, attempts=3, images=None):
         error = ""
         previous = ""
+        value = None
+        validation_error = None
         for attempt in range(attempts):
             suffix = f"\n上次输出未通过校验：{error}。请重新返回完整合法 JSON，不要代码围栏。" if error else ""
             if previous:
                 suffix += "\n上次输出（仅供定位和修正错误）：\n" + previous[:24000]
             text, unused_usage = self.request(prompt + suffix, images=images)
+            value = None
             try:
                 value = parse_json(text)
                 if validator:
@@ -177,6 +188,7 @@ class ModelGateway:
                 return value
             except (ValueError, TypeError, KeyError, SyntaxError) as failure:
                 error = str(failure)[:800]
+                validation_error = failure
                 previous = text
                 # An unusable structured response is also a generation failure.
                 # Honor the explicitly configured fallback order within the same retry budget.
@@ -186,4 +198,4 @@ class ModelGateway:
                     following = models[models.index(current) + 1]
                     print(f"[{self.role}] {current} structured output invalid; switching to {following}", flush=True)
                     self.settings = {**self.settings, "model": following}
-        raise ValueError(f"模型结构化输出在 {attempts} 次尝试后仍不合法: {error}")
+        raise StructuredOutputError(f"模型结构化输出在 {attempts} 次尝试后仍不合法: {error}", value, validation_error)

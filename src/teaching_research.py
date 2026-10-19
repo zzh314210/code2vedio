@@ -152,7 +152,8 @@ def prepare_research(topic, materials, settings, directory, gateway):
             raise ValueError("Return 2..3 focused teaching searches")
     request = ("为下列讲题任务提炼2到3个网络检索词，定位讲这道题/这一题型的完整精讲。不要检索画风、配音或品牌名。"
                "优先一个针对中公/华图等培训机构的精讲，一个找该题原文和分步解析。只输出JSON {\"queries\":[...]}。\n任务：" + topic + "\n素材：" + materials.get("context", "")[:16000])
-    query_plan = gateway.json(request, validate_queries)
+    explicit = bool(settings.get("source_ids") or settings.get("reference_urls"))
+    query_plan = {"queries": []} if explicit else gateway.json(request, validate_queries)
     from teaching_library import TeachingSources
     service = TeachingSources(settings)
     searches, errors, candidates = [], [], []
@@ -202,8 +203,8 @@ def prepare_research(topic, materials, settings, directory, gateway):
         (directory / f"WEB{i}.txt").write_text(source["text"], encoding="utf8")
     evidence = {"fingerprint": fingerprint, "retrieved_at": datetime.now(timezone.utc).isoformat(), "searches": searches, "sources": sources, "errors": errors}
     (directory / "retrieval.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf8")
-    if len(sources) < settings.get("min_sources", 2) or not searches:
-        raise RuntimeError("讲题必须先完成在线搜索并读到至少两篇完整解析；本次检索不足，详见teaching_research/retrieval.json。不会退回凭空设计讲法。")
+    if len(sources) < (1 if explicit else settings.get("min_sources", 2)) or (not explicit and not searches):
+        raise RuntimeError("未读到足够的参考正文，请在素材区选择可用资料或上传完整解析后重试。不会把搜索摘要当成正文。")
     selection_prompt = """你是面向突击备考考生的教研编辑。先比较已读取的完整讲解，再选一个最适合本任务的主讲案例，严格沿用其解题步骤、先后顺序与关键理由。其他来源只交叉核验，不把多个捷径拼成新方法。
 不创新解题思路；不模仿老师的人设/口头禅，不逐字搬运整段讲稿。允许保留标准公式、必要题干，并以自己的精炼语言复述同一推理路径。动画服务于理解这一既有路径。
 从考生角度：识别题型→从哪句话取条件→为什么做这一步→中间量是什么意思→如何代入→怎样排错。解释每步原因，不要一上来堆公式、隐藏设定、算完才补单位。

@@ -20,6 +20,7 @@ func main() {
 	importPlatform := flag.String("import-platform", "", "import server-only model config from a local JSON file")
 	initialize := flag.Bool("init-only", false, "initialize accounts and exit")
 	reset := flag.String("reset-password", "", "reset one username using C2V_NEW_PASSWORD")
+	preview := flag.Bool("preview", false, "isolate preview browser sessions")
 	flag.Parse()
 	syscall.Umask(0077)
 	store, err := openStore(filepath.Join(*root, "private"))
@@ -54,6 +55,9 @@ func main() {
 	handler, err := newServer(store, filepath.Join(*root, "web/dist"), filepath.Join(*root, "private/worker.sock"), origins)
 	if err != nil {
 		log.Fatalf("Initialize API: %v", err)
+	}
+	if *preview {
+		handler.CookieName = "frame_preview_session"
 	}
 	socket := filepath.Join(*root, "private/api.sock")
 	os.Remove(socket)

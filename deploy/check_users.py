@@ -5,7 +5,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 ROOT=Path(__file__).resolve().parents[1]
 base=os.environ.get('C2V_CHECK_URL','http://127.0.0.1:7861')
-credentials=dict(line.split('=',1) for line in (ROOT/'private/admin-access.txt').read_text().splitlines())
+credentials=dict(line.split('=',1) for line in Path(os.environ.get('C2V_CHECK_CREDENTIALS',str(ROOT/'private/admin-access.txt'))).read_text().splitlines())
 artifacts=ROOT/'.tmp/user-system-check';artifacts.mkdir(parents=True,exist_ok=True)
 with sync_playwright() as pw:
  browser=pw.chromium.launch(headless=True)
@@ -16,11 +16,11 @@ with sync_playwright() as pw:
  assert context.request.get(base+'/api/jobs').status==401
  page.locator('input[name=username]').fill(credentials['USERNAME']);page.locator('input[name=password]').fill(credentials['PASSWORD'])
  page.get_by_role('button',name='登录工作空间').click()
- page.get_by_role('heading',name='让想法，成为画面。').wait_for()
+ page.locator('#prompt').wait_for()
  dismiss_guide(page)
  page.screenshot(path=str(artifacts/'desktop-create.png'),full_page=True)
  page.get_by_role('button',name='试试复利讲解').click();assert page.locator('#prompt').input_value()
- page.get_by_role('button',name='配置',exact=True).click();page.get_by_role('heading',name='模型配置',exact=True).wait_for()
+ page.locator('.heading-tools').get_by_role('button',name='模型配置',exact=True).click();page.get_by_role('heading',name='模型配置',exact=True).wait_for()
  assert page.get_by_role('link',name='前往中转站获取访问密钥').get_attribute('href')=='https://token.myaihub.asia'
  assert '阿里云' not in page.locator('body').inner_text()
  assert page.locator('input[name=text-model]').is_visible()
@@ -57,11 +57,11 @@ with sync_playwright() as pw:
   page.set_viewport_size({'width':width,'height':height})
   assert not page.evaluate('document.documentElement.scrollWidth>innerWidth'),('overflow',width)
   page.screenshot(path=str(artifacts/f'mobile-{width}.png'),full_page=True)
-  page.locator('.mobile-nav').get_by_role('button',name='模型配置',exact=True).click()
+  page.locator('.heading-tools').get_by_role('button',name='模型配置',exact=True).click()
   assert page.get_by_role('heading',name='模型配置',exact=True).is_visible()
   assert not page.evaluate('document.documentElement.scrollWidth>innerWidth'),('settings overflow',width)
   page.screenshot(path=str(artifacts/f'settings-{width}.png'),full_page=True)
-  page.locator('.mobile-nav').get_by_role('button',name='新建视频',exact=True).click()
+  page.locator('.mobile-nav').get_by_role('button',name='创作视频',exact=True).click()
  assert_safe_storage(page)
  assert not errors,errors
  page.get_by_role('button',name='退出登录').click();page.get_by_role('button',name='登录',exact=True).wait_for()

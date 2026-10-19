@@ -10,7 +10,7 @@ ROOT=Path(__file__).resolve().parents[1]
 BASE=os.environ.get('C2V_CHECK_URL','https://vedio.myaihub.asia').rstrip('/')
 ARTIFACTS=ROOT/'.tmp/guide-check'
 ARTIFACTS.mkdir(parents=True,exist_ok=True)
-CREDENTIALS=dict(line.split('=',1) for line in (ROOT/'private/admin-access.txt').read_text().splitlines())
+CREDENTIALS=dict(line.split('=',1) for line in Path(os.environ.get('C2V_CHECK_CREDENTIALS',str(ROOT/'private/admin-access.txt'))).read_text().splitlines())
 TITLES=['连接你的模型服务','说清你想做什么视频','补充素材，让内容更准确','选择风格和声音','先确认内容，再制作','作品会保存在这里']
 
 with sync_playwright() as p:
@@ -52,12 +52,12 @@ with sync_playwright() as p:
         expect(page.locator('.studio-guide')).to_have_count(0)
         page.locator('#prompt').fill('制作一个60秒的手绘考试题目讲解视频。')
         page.locator('#duration').select_option('60')
-        page.get_by_role('button',name='使用引导',exact=True).click()
+        page.get_by_role('button',name='一分钟使用引导',exact=True).click()
         step(0)
         page.screenshot(path=str(ARTIFACTS/'guest-desktop.png'))
         page.keyboard.press('Escape')
         expect(page.locator('.studio-guide')).to_have_count(0)
-        expect(page.get_by_role('button',name='使用引导',exact=True)).to_be_focused()
+        expect(page.get_by_role('button',name='一分钟使用引导',exact=True)).to_be_focused()
         page.get_by_role('button',name='登录',exact=True).click()
         login()
         # A guest dismissal must not suppress the first signed-in tour.
@@ -78,7 +78,7 @@ with sync_playwright() as p:
             page.set_viewport_size({'width':width,'height':height})
             page.emulate_media(reduced_motion='reduce')
             page.locator('#prompt').fill('保留这份需求，引导只说明操作。')
-            page.get_by_role('button',name='使用引导',exact=True).click()
+            page.get_by_role('button',name='一分钟使用引导',exact=True).click()
             for i in range(6):
                 step(i)
                 page.screenshot(path=str(ARTIFACTS/f'{width}-step-{i+1}.png'))
@@ -108,7 +108,7 @@ with sync_playwright() as p:
     page=blocked.new_page()
     page.on('pageerror',lambda error:errors.append(str(error)))
     page.goto(BASE,wait_until='networkidle')
-    page.get_by_role('button',name='使用引导',exact=True).click()
+    page.get_by_role('button',name='一分钟使用引导',exact=True).click()
     expect(page.locator('.studio-guide')).to_be_visible()
     page.get_by_role('button',name='跳过使用引导',exact=True).click()
     expect(page.locator('.studio-guide')).to_have_count(0)

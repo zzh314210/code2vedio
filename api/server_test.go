@@ -296,3 +296,30 @@ func TestStartupRejectsBillingInitializationFailure(t *testing.T) {
 		t.Fatal("unavailable billing ledger must fail startup")
 	}
 }
+
+func TestPreviewSessionIsolation(t *testing.T) {
+	_, production := fixture(t)
+	_, preview := fixture(t)
+	preview.CookieName = "frame_preview_session"
+	_, liveCookie := registered(t, production, "live-user")
+	_, previewCookie := registered(t, preview, "preview-user")
+	if liveCookie.Name == previewCookie.Name {
+		t.Fatal("preview overwrites production browser session")
+	}
+	if call(t, preview, "GET", "/api/auth/me", nil, liveCookie, "").Code != 401 {
+		t.Fatal("preview accepted production cookie")
+	}
+	if call(t, production, "GET", "/api/auth/me", nil, previewCookie, "").Code != 401 {
+		t.Fatal("production accepted preview cookie")
+	}
+	if call(t, preview, "GET", "/api/auth/me", nil, previewCookie, "").Code != 200 {
+		t.Fatal("preview login failed")
+	}
+	logout := call(t, preview, "POST", "/api/auth/logout", nil, previewCookie, "")
+	if logout.Code != 200 || logout.Result().Cookies()[0].Name != previewCookie.Name {
+		t.Fatal("preview logout cleared wrong cookie")
+	}
+	if call(t, production, "GET", "/api/auth/me", nil, liveCookie, "").Code != 200 {
+		t.Fatal("preview logout affected production")
+	}
+}

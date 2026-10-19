@@ -4,7 +4,7 @@ export type ProgressJob={id:string;duration:number;status:string;stage:string;st
 const stages=[['outline','整理大纲'],['storyboard','编排分镜'],['audio','合成配音'],['assets','整理素材'],['code','制作动画'],['render','渲染画面'],['review','检查画面'],['compose','合成成片']];
 // Coarse budgets, not a promised delivery time. Rendering/revision dominates.
 const weights=[.09,.13,.08,.02,.24,.24,.16,.04];
-export function estimateMinutes(duration:number){return duration<=45?[6,15]:duration<=90?[12,30]:[18,40]}
+export function estimateMinutes(duration:number){return duration<=45?[6,15]:duration<=90?[12,30]:duration<=120?[18,40]:duration<=180?[25,55]:[40,90]}
 export default function GenerationProgress({job,compact=false}:{job:ProgressJob;compact?:boolean}){
  const index=stages.findIndex(([id])=>id===job.stage),known=index>=0,i=Math.max(0,index);
  const paused=job.status==='awaiting_review',queued=job.status==='queued',failed=job.status==='failed',complete=job.status==='complete';

@@ -103,5 +103,26 @@ def code_prompt(section, previous=None, feedback=None, templates=None, settings=
     return rendered
 
 
-def review_prompt(section, templates=None):
-    return render_template("review", {"section_json": json.dumps(section, ensure_ascii=False)}, templates)
+def review_prompt(section, templates=None, frame_timestamps=None):
+    prompt = render_template("review", {"section_json": json.dumps(section, ensure_ascii=False)}, templates)
+    prompt += '\n字幕核对规则：beat.caption 是策划阶段的内容摘要，不是成片的逐字字幕。成片底部字幕来自 beat.subtitles 中的 text，start/end 是相对于该 beat 起点的秒数。请将画面与对应时刻的 subtitles.text 核对，不要因为逐字字幕与 caption 摘要不同而判错。旁白讲完后的回忆停顿可无字幕。'
+    prompt += '\n证据标准：has_issues=true须有附图可见的事实/数值错误、明显遮挡、错字、不可读或缺失的关键内容。逐条说明具体图号、看见的问题及影响。先观察图中实际文字，不能把“可能乱码”“建议更宽松”等猜测或审美偏好当成已发生错误。动画前半段允许图形仍在变化，应结合同一beat后部抽帧判断最终结论；不能要求每个中间状态等于最终值。公式的正常空格、括号和Unicode数学符号不构成错误。若只是可选微调，has_issues=false，并将其放在可选polish_notes数组。'
+    if frame_timestamps is not None:
+        cursor = 0.0
+        intervals = []
+        for index, beat in enumerate(section['beats']):
+            end = cursor + float(beat['duration'])
+            intervals.append((cursor, end, index, beat))
+            cursor = end
+        evidence = []
+        for frame_index, timestamp in enumerate(frame_timestamps):
+            match = next((item for item in intervals if item[0] <= timestamp < item[1]), None)
+            if match is None:
+                raise ValueError('Review frame timestamp is outside the section timeline')
+            start, _, beat_index, beat = match
+            local = timestamp - start
+            cues = beat.get('subtitles') or [{'start': 0, 'end': beat['duration'], 'text': beat['caption']}]
+            expected = [cue['text'] for cue in cues if cue['start'] <= local < cue['end']]
+            evidence.append({'image': frame_index + 1, 'section_seconds': round(timestamp, 3), 'beat': beat_index + 1, 'beat_seconds': round(local, 3), 'expected_subtitles': expected})
+        prompt += '\n按附图顺序的真实抽帧时间与该时刻应出现的字幕（空数组表示处于无字幕停顿；需核对图形与文字，不能只依据此表宣称画面正确）：\n' + json.dumps(evidence, ensure_ascii=False)
+    return prompt

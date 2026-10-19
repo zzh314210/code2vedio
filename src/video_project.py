@@ -138,6 +138,37 @@ def initialize_project(base, topic, config, identifier=None, parent=None):
             entry = base / "code/runtime/extensions/studio_entry.py"
             entry.parent.mkdir(exist_ok=True)
             entry.write_text("from studio_components import cube_lesson, studio\n", encoding="utf-8")
+    # A project owns an immutable runtime snapshot. New template releases must
+    # not silently rewrite an older project's extension manifest on resume.
+    if task.get("template_id") and not (base/"code/runtime/extensions/template_entry.py").exists():
+        runtime=base/"code/runtime"
+        for name in ("template_components.py","world_land.json"):
+            target=runtime/name
+            source=ROOT/"src"/name
+            if source.is_file() and not target.exists():shutil.copy2(source,target)
+        wrapper=runtime/"extensions/template_entry.py"
+        if not wrapper.exists():
+            wrapper.parent.mkdir(exist_ok=True)
+            wrapper.write_text("from template_components import media_shot, knowledge_map, map_story, story_scene, vocabulary_card, review_cards, recall_card, function_plot, formula_steps, lunar_phases\n",encoding="utf8")
+        if task.get('template_id')=='word_story':
+            source=ROOT/'templates/assets/noto';target=runtime/'noto'
+            if source.is_dir() and not target.exists():shutil.copytree(source,target)
+        entries=json.loads((runtime/"extensions.json").read_text())
+        entries.update({
+            "formula_steps":{"file":"extensions/template_entry.py","entrypoint":"formula_steps","description":"Safe progressive derivation: self.extension('formula_steps',lines=['one short equation per row'],title='short heading',note='conditions'). 1–4 lines, <=65 chars each. Owns whole safe canvas. Use separate beat from graphs; validate each equality and state denominator conditions."},
+            "lunar_phases":{"file":"extensions/template_entry.py","entrypoint":"lunar_phases","description":"Physically consistent lunar geometry: self.extension('lunar_phases',stage='orbit'|'half'|'new'|'first_quarter'|'full'|'last_quarter'|'summary'). Sunlight always from right, hemisphere faces Sun, Earth-view phase projection is calculated, north-up northern convention labelled. Orbit animates four phases. Owns whole canvas; no extra drawing."},
+            "function_plot":{"file":"extensions/template_entry.py","entrypoint":"function_plot","description":"Exact polynomial secant/tangent graph: self.extension('function_plot', coefficients=[0,0,1], focus=1, offsets=[1,.5,.1], mode='secant'|'tangent', x_range=[-.5,2.5], y_range=[-.5,5], label='short heading'). Label must contain at most 24 characters; put longer explanation in narration. Ascending-power coefficients; positions/slopes computed exactly, curve/lines clipped; all focus/offset points must fit ranges. Owns full canvas, no extra drawing. Change data to match user problem; not for non-polynomial functions."},
+            "review_cards":{"file":"extensions/template_entry.py","entrypoint":"review_cards","description":"Final summary: self.extension('review_cards',items=[{'title':'<=10 chars','text':'<=38 chars'},...]); 2–4 facts in separated readable cards, owns safe canvas, no extra drawing."},
+            "recall_card":{"file":"extensions/template_entry.py","entrypoint":"recall_card","description":"Recall question/answer: self.extension('recall_card',question='<=55 chars',answer='<=55 chars',reveal=False). Split question/answer into separate beats; question beat hold_after_seconds=2; answer beat reveal=True. Owns safe canvas, no extra drawings."},
+            "story_scene":{"file":"extensions/template_entry.py","entrypoint":"story_scene","description":"Licensed recognizable story actors: self.extension('story_scene',actor='banana'|'robot'|'cat',prop='boat'|'book',place='bread'|'island',action='sail'|'leave'|'arrive'|'discover',setting='water'|'ground'). Owns entire safe canvas; call once per beat with no extra drawings/labels. Keep actor/prop/place consistent across story beats."},
+            "vocabulary_card":{"file":"extensions/template_entry.py","entrypoint":"vocabulary_card","description":"Clear word/meaning/example/recall layout: self.extension('vocabulary_card',word='abandon',meaning='放弃、抛弃',example='The captain had to abandon the ship.',quiz=False). quiz=True hides meaning first and reveals near answer narration. Owns full safe canvas; no extra text/cards."},
+            "media_shot":{"file":"extensions/template_entry.py","entrypoint":"media_shot","description":"Safe real-media shot: self.extension('media_shot', key='asset key', label='optional short label <=28 chars', motion='push'|'reveal'|'hold', framing='contain'|'cover'). Use contain for intact product/screenshots; cover crops a documentary photo to fill the viewport. Fits source within safe layout and adds restrained movement. Call once per beat; do not duplicate subject/labels."},
+            "knowledge_map":{"file":"extensions/template_entry.py","entrypoint":"knowledge_map","description":"Reusable visual knowledge framework: self.extension('knowledge_map', items=['2 to 5 short concept labels <=12 chars'], active=0). Draws connected topic nodes and highlights one; keep same items across beats, change active."},
+            "map_story":{"file":"extensions/template_entry.py","entrypoint":"map_story","description":"Geographically projected map and timeline focus: self.extension('map_story',locations=[{'name':'北京','lat':39.90,'lon':116.41},...],active=0,connect=True,date='1919年5月4日',event='北京学生抗议'). date<=14 chars,event<=26 chars. Component owns full safe region: no extra labels, dates, arrows, titles, or transforms in the same beat. 1–6 real coordinate locations, same list across beats, change active to follow story. Numbers/legend avoid label overlaps; connection means narrative association, not an actual travel route. Do not duplicate map or labels."}
+        })
+        if task.get('template_id')!='word_story':
+            entries.pop('story_scene',None);entries.pop('vocabulary_card',None)
+        write_json(runtime/"extensions.json",entries)
     read_extensions(base / "code/runtime")
     if not (base / "settings.json").exists():
         write_json(base / "settings.json", public_config(config))

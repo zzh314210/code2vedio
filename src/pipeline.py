@@ -1,4 +1,5 @@
 import ast
+import copy
 import hashlib
 import json
 import math
@@ -12,10 +13,10 @@ from configuration import public_config, sanitize_error
 from lesson_prompts import outline_prompt, storyboard_prompt, code_prompt, review_prompt
 from materials import load_materials
 from media import concat, fit_audio, prepend_audio_silence, mux, probe, run_command, sample_frames, write_subtitles
-from model_gateway import ModelGateway
+from model_gateway import ModelGateway, StructuredOutputError
 from narration import Narrator
 from planning_review import PlanningPending
-from teaching_research import enabled_for, prepare_research, research_context, validate_step_coverage
+from teaching_research import enabled_for, prepare_research, research_context, validate_step_coverage, validate_plan
 from series_style import validate_style_snippet
 from styles import StylePackage, load_style, snapshot_hash, style_video_config, style_stage_policy
 from icon_assets import AssetManager
@@ -30,6 +31,10 @@ def save_json(filename, value):
     validate_output(filename.parent, temporary)
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(filename)
+
+
+class NarrationBudgetError(ValueError):
+    pass
 
 
 def nonempty(value, label, maximum=4000):
@@ -65,6 +70,23 @@ def validate_snippet(code, extensions=None):
     prohibited = (ast.Import, ast.ImportFrom, ast.While, ast.With, ast.AsyncWith, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Return, ast.Raise, ast.Try, ast.Global, ast.Nonlocal)
     denied_names = {"open", "exec", "eval", "compile", "getattr", "setattr", "delattr", "globals", "locals", "vars", "input", "breakpoint", "__import__", "Tex", "MathTex", "SVGMobject", "ImageMobject"}
     allowed_methods = {"play", "wait", "add", "remove", "scene_text", "scene_paragraph", "sketch_line", "asset", "extension", "style_color", "sketch_shape", "ink_path"}
+    # Catch invented constructors before spending minutes on a full render.
+    # Only check direct class-like calls; local variables/method chains retain
+    # normal Python semantics and the existing sandbox remains authoritative.
+    import manim
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == 'self'
+                and node.func.attr == 'extension' and node.args
+                and isinstance(node.args[0], ast.Constant) and node.args[0].value == 'function_plot'):
+            for keyword in node.keywords:
+                if keyword.arg == 'label' and isinstance(keyword.value, ast.Constant):
+                    if not isinstance(keyword.value.value, str) or len(keyword.value.value) > 24:
+                        raise ValueError('函数图标题最多24字，较长解释请放入旁白。')
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            name = node.func.id
+            if name[:1].isupper() and not hasattr(manim, name):
+                raise ValueError(f"Manim 没有 {name}。请使用真实 API，例如 DashedVMobject(Circle(...))；不要编造类名。")
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self" and node.attr == "extension":
             calls = [call for call in ast.walk(tree) if isinstance(call, ast.Call) and call.func is node]
@@ -317,7 +339,30 @@ class VideoPipeline:
             validator(result)
             return result
         images = self.reference_images if filename in ("outline.json", "storyboard.json") else []
-        result = self.text.json(prompt, validator, images=images)
+        try:
+            result = self.text.json(prompt, validator, images=images)
+        except StructuredOutputError as error:
+            # A structurally sound storyboard can still be too verbose after
+            # general retries. Repair only speech, preserving every visual,
+            # fact constraint, section, and recall pause for full revalidation.
+            if filename != "storyboard.json" or not isinstance(error.validation_error, NarrationBudgetError) or not isinstance(error.candidate, dict):
+                raise
+            candidate = copy.deepcopy(error.candidate)
+            beats = [beat for section in candidate["sections"] for beat in section["beats"]]
+            target = self.config["video"]["target_duration"]
+            request = "你是短视频旁白编辑。只压缩每段narration，不重写分镜。删除重复与开场套话，保留事实、数字、结论、公式的适用条件和提问答案。复杂计算可以交给已有画面，但不能说反或漏掉必要条件。不要加快语速，也不要截断句子。"
+            request += f"\n全片目标{target}秒，总旁白控制在约{int(target*2.7)}个中文字符以内。按原顺序返回恰好{len(beats)}个旁白，格式只需 {{\"narrations\":[\"第一段\",\"第二段\"]}}。"
+            request += "\n原始分镜与必须保留的画面/问答：\n" + json.dumps(candidate, ensure_ascii=False)
+            def validate_shortened(value):
+                lines = value.get("narrations") if isinstance(value, dict) else None
+                if not isinstance(lines, list) or len(lines) != len(beats):
+                    raise ValueError("压缩旁白必须逐段对应，不能增删或重排段落")
+                for beat, line in zip(beats, lines):
+                    nonempty(line, "narration", self.config["video"].get("narration_max_chars", 140))
+                    beat["narration"] = line
+                validator(candidate)
+            self.text.json(request, validate_shortened, attempts=2, images=images)
+            result = candidate
         save_json(file, result)
         return result
 
@@ -335,11 +380,14 @@ class VideoPipeline:
             video = self.config["video"]
             original += "\n可设置 lead_in_seconds 为0到30秒的静默读题前置时间；配音和字幕自动延后。video.fixed_beat_durations=true 时 duration_seconds 为该段总时长（含读题），旁白必须在该段内说完。"
             if video.get("target_duration"):
-                original += f"\n总时长目标 {video['target_duration']} 秒；中文旁白建议不超过 {int(video['target_duration'] * 3.8)} 字，预留动画停顿。可以给每个beat添加正数duration_seconds作为视觉时间权重。"
+                original += f"\n总时长目标 {video['target_duration']} 秒；中文旁白建议不超过 {int(video['target_duration'] * (2.8 if course.get('template_id') else 3.8))} 字，预留动画停顿。可以给每个beat添加正数duration_seconds作为视觉时间权重。"
+            original += '\n回忆题请将提问与答案拆成两个beats；提问beat设置hold_after_seconds=2，旁白说完后会真正停顿两秒，再进入答案镜头。hold_after_seconds允许0至10秒，计入总时长。'
             original += f"\n本项目每个 beat 的字符上限：narration ≤{video.get('narration_max_chars', 140)}，caption ≤{video.get('caption_max_chars', 42)}。"
         if stage == "code":
             descriptions = {name: entry.get("description", "") for name, entry in self.extensions.items()}
             original += "\n本项目允许的动画扩展（空对象表示无扩展；调用 self.extension(名称字面量, ...)，首个参数自动传入 scene）：" + json.dumps(descriptions, ensure_ascii=False)
+        if stage == 'review':
+            original += '\n字幕仅在对应subtitles的start/end期间显示；旁白结束后的停顿、回忆题留白和正常转场中字幕为空是预期行为。不要要求字幕常驻或把空字幕框本身当成错误。地图已经标有“地图定位示意”且地点关系正确时，不需要强制添加经纬度数字或比例尺。仍须核对地图位置、日期、文字重叠与内容遗漏。'
         if stage in ("outline", "storyboard", "code") and getattr(self, "teaching_research", None):
             original += research_context(self.teaching_research)
         return original + f"\n项目语言：{course.get('language', '中文')}\n创作者课程要求（仍须符合事实和输出格式约束）：{course.get('instructions', '')}\n本阶段补充要求：{course.get('prompts', {}).get(stage, '')}"
@@ -364,6 +412,7 @@ class VideoPipeline:
         if not isinstance(sections, list) or not 1 <= len(sections) <= self.config["video"]["max_sections"]:
             raise ValueError("大纲章节数量超出限制")
         valid_sources = {chunk["source"] for chunk in self.materials["selected_chunks"]}
+        valid_sources.update(item["name"] for item in self.materials.get("visual_inputs", []))
         if getattr(self, "teaching_research", None):
             valid_sources.update(source["id"] for source in self.teaching_research["sources"])
         for index, section in enumerate(sections, 1):
@@ -398,6 +447,9 @@ class VideoPipeline:
                 lead = beat.get("lead_in_seconds", 0)
                 if isinstance(lead, bool) or not isinstance(lead, (int, float)) or not math.isfinite(lead) or not 0 <= lead <= 30:
                     raise ValueError("lead_in_seconds must be a finite number in [0,30]")
+                hold = beat.get('hold_after_seconds', 0)
+                if isinstance(hold, bool) or not isinstance(hold, (int, float)) or not math.isfinite(hold) or not 0 <= hold <= 10:
+                    raise ValueError('hold_after_seconds must be a finite number in [0,10]')
                 planned = beat.get("duration_seconds", 1)
                 if isinstance(planned, bool) or not isinstance(planned, (int, float)) or not math.isfinite(planned) or not 0 < planned <= 120:
                     raise ValueError("duration_seconds must be a finite visual timing weight in (0,120]")
@@ -405,10 +457,40 @@ class VideoPipeline:
             if not isinstance(keywords, list) or len(keywords) > 4 or any(not isinstance(term, str) or not re.fullmatch(r"[a-zA-Z0-9 -]{1,50}", term) for term in keywords):
                 raise ValueError("icon_keywords 必须是最多 4 个简单英文关键词")
 
+        target=self.config["video"].get("target_duration")
+        task=self.config.get('task',{})
+        if task.get('template_version',0)>=4 and task.get('template_id') in {'history_map','notes','math_visual','word_story'}:
+            beats=[b for s in sections for b in s['beats']]
+            questions=[i for i,b in enumerate(beats) if b.get('recall_role')=='question']
+            if not questions or any(i+1>=len(beats) or beats[i+1].get('recall_role')!='answer' or beats[i].get('hold_after_seconds',0)<2 for i in questions):
+                raise ValueError('请预留完整回忆问答：提问beat标recall_role=question且hold_after_seconds至少2秒；紧接一个recall_role=answer的答案beat。精简前面镜头，为最后问答留出两个beats，不得遗漏答案。')
+            if task.get('template_version',0)>=5 and task.get('template_id')=='notes':
+                for section in sections:
+                    promised=re.search(r'([一二三123])道.{0,8}(?:小测|练习|题)',section['title'])
+                    count=sum(beat.get('recall_role')=='question' for beat in section['beats'])
+                    if promised and count!={'一':1,'二':2,'三':3,'1':1,'2':2,'3':3}[promised.group(1)]:
+                        raise ValueError('小测数量必须与章节标题一致；每题需要独立提问、停顿和答案，不能标题写三题却只制作一题。')
+        if target and self.config.get("task",{}).get("template_id"):
+            # Count spoken content, not punctuation, spaces, or every letter in
+            # an English word. The synthesized audio is still the final timing
+            # authority; this early estimate only rejects clearly overfull text.
+            def spoken_units(text):
+                return sum(1 if not token.isascii() else max(1, len(token) / 3)
+                           for token in re.findall(r"[\u4e00-\u9fff]|[A-Za-z]+|[0-9]", text))
+            total=math.ceil(sum(spoken_units(b["narration"]) for s in sections for b in s["beats"]))
+            limit=int(target*3.6)
+            if total>limit:raise NarrationBudgetError(f"旁白约{total}个发音单位，{target}秒模板最多{limit}。请将每段旁白缩减到当前的{int(limit/total*85)}%以内，并保留必要事实，把非必要细节留给画面，不要增加解说速度。")
         if getattr(self, "teaching_research", None):
             validate_step_coverage(storyboard, self.teaching_research["plan"], "storyboard")
 
     def research_teaching(self):
+        if self.config.get('task', {}).get('reuse_verified_research'):
+            self.teaching_research = json.loads((self.output / 'teaching_research/research.json').read_text(encoding='utf8'))
+            for source in self.teaching_research['sources']:
+                if hashlib.sha256(source['text'].encode()).hexdigest()!=source['sha256']:
+                    raise ValueError('Archived teaching source hash mismatch')
+            validate_plan(self.teaching_research['plan'], self.teaching_research['sources'])
+            return
         settings = self.config.get("teaching_research", {})
         if enabled_for(self.topic, settings):
             self.teaching_research = prepare_research(self.topic, self.materials, settings, self.output / "teaching_research", self.text)
@@ -449,7 +531,7 @@ class VideoPipeline:
                 save_json(metadata, info)
             info["duration"] = probe(audio)["duration"]
             save_json(metadata, info)
-            beat["duration"] = math.ceil((info["duration"] + self.config["video"]["pause_seconds"]) * fps) / fps
+            beat["duration"] = math.ceil((info["duration"] + self.config["video"]["pause_seconds"] + float(beat.get('hold_after_seconds', 0))) * fps) / fps
             if self.config["video"].get("fixed_beat_durations"):
                 beat["duration"] = max(beat["duration"], float(beat.get("duration_seconds", beat["duration"])))
             beat["audio"] = str(audio)
@@ -457,7 +539,7 @@ class VideoPipeline:
         return section
 
     def assemble_code(self, section, snippets):
-        validate_code(snippets, len(section["beats"]), self.extensions, self.config["video"])
+        self.validate_snippets(snippets, len(section["beats"]))
         definitions = "from manim import *\nimport numpy as np\nimport math\nfrom scene_runtime import NarratedScene\n\n"
         style = {key: self.config["video"].get(key) for key in ("theme", "orientation", "brand", "style_palette", "layout", "reset_between_beats", "exit_fade", "template_id", "style_lock")}
         background = self.config["video"].get("style_palette", {}).get("background", "#F7FAF7" if style["theme"] == "light" else "#0b1020")
@@ -473,6 +555,8 @@ class VideoPipeline:
         definitions += f"    lesson_beats = {section['beats']!r}\n\n    def construct(self):\n"
         asset_paths = {item["key"]: item["path"] for item in section.get("assets", [])}
         credits = " | ".join(sorted({item["credit"] for item in section.get("assets", [])}))
+        if self.config.get('task',{}).get('template_id')=='word_story':
+            credits=' | '.join(filter(None,[credits,'Noto Emoji / Google / Apache 2.0']))
         definitions = definitions.replace("\n\n    def construct(self):", f"\n    lesson_assets = {asset_paths!r}\n    lesson_credits = {credits!r}\n\n    def construct(self):")
         for index, beat in enumerate(snippets["beats"]):
             definitions += f"        self.begin_beat({index})\n"
@@ -510,17 +594,52 @@ class VideoPipeline:
             raise RuntimeError("动画时间轴与旁白时长不一致，需要修复代码")
         return video
 
+    def validate_snippets(self, value, count):
+        validate_code(value, count, self.extensions, self.config['video'])
+        owned={'history_map':{'map_story'},'word_story':{'story_scene','vocabulary_card'},'product':{'media_shot'},'documentary':{'media_shot'},'notes':{'knowledge_map','function_plot'},'math_visual':{'function_plot'}}.get(self.config.get('task',{}).get('template_id'),set())
+        if self.config.get('task',{}).get('template_id'):owned=owned|{'review_cards','recall_card','function_plot','formula_steps','lunar_phases'}
+        if not owned:return
+        for beat in value['beats']:
+            calls=[node for node in ast.walk(ast.parse(beat['code'])) if isinstance(node,ast.Call)]
+            def component(node):
+                if isinstance(node.func,ast.Attribute) and isinstance(node.func.value,ast.Name) and node.func.value.id=='self' and node.func.attr=='extension' and node.args and isinstance(node.args[0],ast.Constant) and node.args[0].value in owned:
+                    return node.args[0].value
+                return None
+            chosen=[node for node in calls if component(node)]
+            if not chosen:continue
+            if len(chosen)>1:raise ValueError('同一分镜只能调用一次完整画布组件，避免主体与文字重叠。请把多个镜头拆成不同beats。')
+            for node in calls:
+                if component(node):continue
+                if isinstance(node.func,ast.Attribute) and isinstance(node.func.value,ast.Name) and node.func.value.id=='self' and node.func.attr=='wait':continue
+                raise ValueError(f"{component(chosen[0])}组件已负责完整画布。只调用该组件（通过参数传入日期/事件/角色/词义），可加self.wait；不要额外画图、加字或移动组件。其他讲解镜头可单独不用该组件。")
+
     def render_with_repairs(self, section, snippets, start_revision):
+        from execution import RenderInfrastructureError
         for attempt in range(self.config["video"]["fix_attempts"] + 1):
             revision = start_revision + attempt
             save_json(self.output / f"{section['id']}_code_{revision}.json", snippets)
             try:
                 return self.render(section, snippets, revision), snippets, revision
+            except RenderInfrastructureError:
+                raise
             except RuntimeError as failure:
                 if attempt == self.config["video"]["fix_attempts"]:
                     raise RuntimeError(f"{section['id']} 渲染修复耗尽，完整日志已保存") from failure
                 print(f"修复 {section['id']}，第 {attempt + 1} 次")
-                snippets = self.text.json(self.prompt("code", code_prompt(section, snippets, str(failure)[-8000:], self.templates, self.config["video"])), lambda value: validate_code(value, len(section["beats"]), self.extensions, self.config["video"]))
+                snippets = self.text.json(self.prompt("code", code_prompt(section, snippets, str(failure)[-8000:], self.templates, self.config["video"])), lambda value: self.validate_snippets(value, len(section["beats"])))
+
+    def assess_visual(self,section,frames,timestamps):
+        """Corroborate a rejection before rewriting a film from sampled stills.
+
+        Keep both opinions. A second check must judge the actual images and
+        timings, including genuine errors, not automatically prefer acceptance.
+        """
+        prompt=self.prompt('review',review_prompt(section,self.templates,frame_timestamps=timestamps))
+        first=self.vision.json(prompt,self.validate_feedback,images=frames)
+        if not first['has_issues']:return first
+        confirmation=self.vision.json(prompt+'\n下面是一份待核实的初审，可能正确也可能误读。请逐项对照附图与时间核实，而非照抄。真实问题必须保留；正常动画中间态、已经显示的文字以及没有证据的推测不能作为阻断理由。输出同一JSON结构，另可用polish_notes列出可选优化。\n待核实初审：'+json.dumps(first,ensure_ascii=False),self.validate_feedback,images=frames)
+        confirmation['initial_assessment']=first
+        return confirmation
 
     def run(self, plan_only=False, stop_after="compose"):
         from execution import project_lock
@@ -609,7 +728,7 @@ class VideoPipeline:
             self.event("code", "running", "生成配音时长驱动的 Manim 代码")
             codes = {}
             for section in storyboard["sections"]:
-                codes[section["id"]] = self.cached_json(f"{section['id']}_code.json", self.prompt("code", code_prompt(section, templates=self.templates, settings=self.config["video"])), lambda value: validate_code(value, len(section["beats"]), self.extensions, self.config["video"]))
+                codes[section["id"]] = self.cached_json(f"{section['id']}_code.json", self.prompt("code", code_prompt(section, templates=self.templates, settings=self.config["video"])), lambda value: self.validate_snippets(value, len(section["beats"])))
             self.event("code", "complete")
             if stop_after == "code":
                 return self.output
@@ -641,12 +760,13 @@ class VideoPipeline:
                     for round_number in range(self.config["vision"]["rounds"] + 1):
                         from media import sample_beat_frames
                         frames = sample_beat_frames(video, self.output / section_id / f"review_{round_number}", section["beats"], self.config["vision"]["frames"])
-                        feedback = self.vision.json(self.prompt("review", review_prompt(section, self.templates)), self.validate_feedback, images=frames)
+                        timestamps = json.loads((frames[0].parent / 'timestamps.json').read_text(encoding='utf8'))
+                        feedback = self.assess_visual(section,frames,timestamps)
                         feedback["reviewed_revision"] = revision
                         save_json(self.output / f"{section_id}_review_{round_number}.json", feedback)
                         if not feedback["has_issues"] or round_number == self.config["vision"]["rounds"]:
                             break
-                        revised = self.text.json(self.prompt("code", code_prompt(section, snippets, json.dumps(feedback, ensure_ascii=False), self.templates, self.config["video"])), lambda value: validate_code(value, len(section["beats"]), self.extensions, self.config["video"]))
+                        revised = self.text.json(self.prompt("code", code_prompt(section, snippets, json.dumps(feedback, ensure_ascii=False), self.templates, self.config["video"])), lambda value: self.validate_snippets(value, len(section["beats"])))
                         video, snippets, revision = self.render_with_repairs(section, revised, revision + 1)
                     rendered[section_id] = {"video": str(video), "revision": revision}
                     save_json(self.output / f"{section_id}_code.json", snippets)

@@ -7,7 +7,7 @@ import {request,jsonRequest} from './services';
 
 type Doc=Record<string,any>;
 type Snapshot={status:string;pending_stage?:string;auto_approve:boolean;documents:Record<string,{document:Doc;version:string;approved:boolean}>;sources?:{id:string;title:string;url:string}[];teaching_plan?:{method:string;steps:{id:string;explanation:string;why:string;visual_action:string;evidence_time?:{start:number;end:number}}[]}};
-type Props={job:{id:string;status:string;stage:string;message?:string;updated_at?:number};onChange:()=>Promise<void>};
+type Props={job:{id:string;status:string;stage:string;message?:string;updated_at?:number;revision_summary?:string};onChange:()=>Promise<void>};
 const names:Record<string,string>={outline:'大纲',storyboard:'分镜'};
 function Field({label,value,onChange,lines=false}:{label:string;value:string;onChange:(s:string)=>void;lines?:boolean}){
  return <label className="editor-field"><span>{label}</span>{lines?<Textarea value={value} onChange={e=>onChange(e.target.value)}/>:<Input value={value} onChange={e=>onChange(e.target.value)}/>}</label>
@@ -33,6 +33,7 @@ export default function PlanningPanel({job,onChange}:Props){
  }catch(e){setError((e as Error).message)}finally{setBusy('')}};
  return <section className="planning-panel" aria-labelledby="planning-title">
   <div className="planning-heading"><div><span className="eyebrow">创作审核 · {job.id.slice(-6)}</span><h2 id="planning-title">先讲清楚，再开始制作。</h2><p>{waiting?'AI 正在修改，完成后会回到这里供你确认。':'检查讲解路径与每一幕的表达。保存草稿不会开始配音。'}</p></div><span className="approval-tag">{waiting?'AI 修改中':'等待确认'+names[snapshot?.pending_stage||stage]}</span></div>
+  {job.revision_summary&&<p className="revision-summary-note">本版调整：{job.revision_summary}</p>}
   <div className="planning-tabs" role="group" aria-label="选择审核文档">{['outline','storyboard'].map(s=><button key={s} aria-pressed={s===stage} disabled={!snapshot?.documents[s]||Boolean(busy)||waiting} onClick={()=>select(s)}>{s==='outline'?'01 大纲':'02 分镜'}{snapshot?.documents[s]?.approved&&<Check size={15}/>}</button>)}<span>{dirty?'● 有未保存修改':'✓ 草稿已同步'}{snapshot?.documents[stage]?.approved?' · 已确认':''}</span></div>
   {error&&<div className="editor-error" role="alert">{error}</div>}
   {job.message&&<p className="editor-notice" role="status">{job.message}</p>}

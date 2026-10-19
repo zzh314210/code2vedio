@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE = os.environ.get('C2V_CHECK_URL', 'https://vedio.myaihub.asia').rstrip('/')
 ARTIFACTS = ROOT / '.tmp/guest-check'
 ARTIFACTS.mkdir(parents=True, exist_ok=True)
-CREDENTIALS = dict(line.split('=', 1) for line in (ROOT / 'private/admin-access.txt').read_text().splitlines())
+CREDENTIALS = dict(line.split('=', 1) for line in Path(os.environ.get('C2V_CHECK_CREDENTIALS',str(ROOT / 'private/admin-access.txt'))).read_text().splitlines())
 PROMPT = '制作90秒的原创考公题目讲解，先给出题干，再用手绘图示解释净消耗，最后验证答案。'
 
 with sync_playwright() as p:
@@ -30,12 +30,12 @@ with sync_playwright() as p:
         page.locator('[name=password]').fill(CREDENTIALS['PASSWORD'])
         page.get_by_role('button', name='登录工作空间', exact=True).click()
         expect(page.locator('.auth-page')).to_have_count(0)
-        expect(page.get_by_role('button', name='退出登录', exact=True)).to_be_visible()
         dismiss_guide(page)
+        expect(page.get_by_role('button', name='退出登录', exact=True)).to_be_visible()
 
     def back():
         page.get_by_role('button', name='返回创作面板', exact=True).click()
-        expect(page.get_by_role('heading', name='让想法，成为画面。')).to_be_visible()
+        expect(page.locator('.creation-headline')).to_be_visible()
 
     def draft():
         expect(page.locator('#prompt')).to_have_value(PROMPT)
@@ -49,7 +49,7 @@ with sync_playwright() as p:
     try:
         response = page.goto(BASE, wait_until='networkidle')
         assert response.status == 200 and 'www-authenticate' not in response.headers
-        expect(page.get_by_role('heading', name='让想法，成为画面。')).to_be_visible()
+        expect(page.locator('.creation-headline')).to_be_visible()
         expect(page.locator('[name=username]')).to_have_count(0)
         expect(page.locator('.input-panel').get_by_role('heading', name='视频创作', exact=True)).to_be_visible()
         expect(page.locator('.preview-panel').get_by_role('heading', name='画面预览', exact=True)).to_be_visible()
@@ -88,7 +88,7 @@ with sync_playwright() as p:
         page.get_by_role('button', name='点击上传，或将素材拖到这里', exact=False).click()
         expect(page.get_by_role('heading', name='欢迎回来')).to_be_visible()
         page.go_back()
-        expect(page.get_by_role('heading', name='让想法，成为画面。')).to_be_visible()
+        expect(page.locator('.creation-headline')).to_be_visible()
         draft()
         page.locator('.upload-zone').evaluate("""el=>{
             const transfer=new DataTransfer();
@@ -139,14 +139,14 @@ with sync_playwright() as p:
         page.get_by_role('button', name='清除筛选', exact=True).click()
         page.locator('.library-filters').get_by_role('button', name='已完成', exact=True).click()
         expect(page.locator('.job-card').first).to_be_visible()
-        expect(page.locator('.job-status')).to_have_count(0)
+        expect(page.locator('.library-section:not(.edit-library) .job-status')).to_have_count(0)
         page.evaluate('window.scrollTo(0,0)')
         page.screenshot(path=str(ARTIFACTS / 'library-desktop.png'), full_page=True)
         page.set_viewport_size({'width':390,'height':844})
         assert not page.evaluate('document.documentElement.scrollWidth>innerWidth'), 'library overflow'
         page.screenshot(path=str(ARTIFACTS / 'library-mobile.png'), full_page=True)
         page.set_viewport_size({'width':1440,'height':1050})
-        page.get_by_role('button', name='配置', exact=True).click()
+        page.locator('.heading-tools').get_by_role('button', name='模型配置', exact=True).click()
         expect(page.get_by_role('heading', name='模型配置', exact=True)).to_be_visible()
         expect(page.locator('[name=text_api_key]')).to_have_value('')
         expect(page.locator('[name=vision_api_key]')).to_have_value('')

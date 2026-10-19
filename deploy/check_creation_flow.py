@@ -1,10 +1,10 @@
 """Browser behavior contract: all references selectable, honest progress, no paid calls."""
 from browser_helpers import dismiss_guide
 from pathlib import Path
-import json,time
+import json,time,os
 from playwright.sync_api import sync_playwright,expect
-ROOT=Path(__file__).resolve().parents[1];BASE='https://vedio.myaihub.asia'
-creds=dict(x.split('=',1) for x in (ROOT/'private/admin-access.txt').read_text().splitlines())
+ROOT=Path(__file__).resolve().parents[1];BASE=os.environ.get('C2V_CHECK_URL','https://vedio.myaihub.asia')
+creds=dict(x.split('=',1) for x in Path(os.environ.get('C2V_CHECK_CREDENTIALS',str(ROOT/'private/admin-access.txt'))).read_text().splitlines())
 out=ROOT/'.tmp/creation-check';out.mkdir(parents=True,exist_ok=True)
 with sync_playwright() as p:
  b=p.chromium.launch();c=b.new_context(viewport={'width':1440,'height':1050});page=c.new_page();errors=[]

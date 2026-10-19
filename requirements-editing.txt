@@ -1,0 +1,9 @@
+# Local, CPU-only media analysis; no cloud speech or stock-media API needed.
+scenedetect==0.6.7.1
+opencv-python-headless==4.11.0.86
+faster-whisper==1.2.0
+opentimelineio==0.17.0
+requests==2.32.5
+
+av==15.1.0
+opencc-python-reimplemented==0.1.7

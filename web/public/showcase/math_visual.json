@@ -1,0 +1,8 @@
+{
+  "template": "math_visual",
+  "sha256": "07c172a102a4d35656978430ee0d852d8e28f32e6ef9d20c898aff51634fac77",
+  "duration": 60.0,
+  "review_note": "60秒从割线移动到切线，使用精确坐标与斜率；人工逐幕核对推导、非零条件、回忆停顿和答案，经过画面调整及重新审核。",
+  "project": "showcase-math_visual-v7",
+  "review": "accepted after actual film inspection"
+}

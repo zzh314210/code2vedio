@@ -2,7 +2,7 @@
 :root { --module-blue: #1d4ed8; --module-teal: #0f766e; --module-violet: #6d28d9; --module-amber: #92400e; --module-green: #047857; }
 .main-content { color: #25324b; }
 .field-label { color: #25324b; font-size: 14px; font-weight: 650; }
-.input-panel { border-top: 4px solid var(--module-blue); }
+.input-panel { border: 1.5px solid #bdcfee; }
 .input-panel > .panel-heading { border-bottom: 1px solid #dbeafe; padding-bottom: 16px; }
 .input-panel > .panel-heading h2 { font-size: 18px; font-weight: 700; color: #1e3a8a; }
 .panel-icon { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 9px; color: #1d4ed8; background: #eaf2ff; }
@@ -51,7 +51,7 @@
 .review-mode strong { color: #78350f; }
 .review-mode small { color: #785b35; line-height: 1.8; }
 .review-mode input { accent-color: #b45309; }
-.preview-panel { border-top: 4px solid var(--module-violet); background: linear-gradient(#faf7ff 0,#fff 140px); }
+.preview-panel { border: 1.5px solid #d1c0e9; background: linear-gradient(#faf7ff 0,#fff 140px); }
 .preview-panel .panel-heading h2 { color: #4c1d95; font-weight: 700; font-size: 18px; }
 .preview-panel .panel-icon { color: #6d28d9; background: #eee7f9; }
 .creation-summary { background: #f8f5ff; border: 1px solid #e6dcf5; border-radius: 10px; padding: 14px 12px; }

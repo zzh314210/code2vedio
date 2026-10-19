@@ -11,10 +11,11 @@ artifacts=ROOT/'.tmp/live-video-check';artifacts.mkdir(parents=True,exist_ok=Tru
 with sync_playwright() as p:
  browser=p.chromium.launch(headless=True);context=browser.new_context(viewport={'width':1440,'height':1000});page=context.new_page()
  page.goto(base+'/#login',wait_until='networkidle');page.locator('[name=username]').fill(credentials['USERNAME']);page.locator('[name=password]').fill(credentials['PASSWORD'])
- page.get_by_role('button',name='登录工作空间').click();page.get_by_role('heading',name='让想法，成为画面。').wait_for()
+ page.get_by_role('button',name='登录工作空间').click();page.locator('#prompt').wait_for()
  dismiss_guide(page)
  response=context.request.get(base+'/api/jobs/'+args.job);assert response.status==200
  job=response.json();assert job['status']=='complete',job['status'];assert job['review']['passed'],job['review']
+ page.locator('.sidebar').get_by_role('button',name='我的作品',exact=True).click()
  page.get_by_role('button',name='预览 '+job['prompt'],exact=True).click()
  video=page.locator('video');video.wait_for();page.wait_for_function('() => document.querySelector("video").readyState>=2')
  details=video.evaluate('(v)=>({duration:v.duration,width:v.videoWidth,height:v.videoHeight,tracks:v.textTracks.length})')

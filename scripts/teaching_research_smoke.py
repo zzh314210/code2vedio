@@ -34,6 +34,10 @@ with tempfile.TemporaryDirectory() as temp,patch.object(TeachingSources,'search'
   except RuntimeError:pass
   else:raise AssertionError('Offline research invented an explanation')
  assert (Path(temp)/'offline/retrieval.json').is_file()
+ with patch.object(TeachingSources,'search',side_effect=AssertionError('Selected reference must not trigger search')):
+  single=research.prepare_research('按选定文稿讲解',{'context':''},{**settings,'reference_urls':[SOURCES[0]['url']]},Path(temp)/'single',Gateway())
+  assert len(single['sources'])==1 and single['plan']['primary_source_id']=='WEB1'
+
  assert research.enabled_for('行测数量关系',{}) and not research.enabled_for('解释太阳系轨道',{})
 
 

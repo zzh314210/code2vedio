@@ -1,0 +1,8 @@
+{
+  "template": "history_map",
+  "sha256": "3b5d220aa326cb0c5575cc1a52f896ff11511a515d1ab0f9c0637d848dcc60b5",
+  "duration": 90.0,
+  "review_note": "真实地图串联巴黎、北京与上海，区分5月与6月事件；人工调整结尾考点和问答，逐帧检查地点、字幕及两秒回忆停顿。",
+  "project": "showcase-history_map-v4",
+  "review": "accepted after actual film inspection"
+}

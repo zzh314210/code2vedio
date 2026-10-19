@@ -40,4 +40,15 @@ with tempfile.TemporaryDirectory() as temporary:
     pipe.prepare_audio(section)
     assert pipe.narrator.calls==2 and beat['subtitles'][0]['start']==3
     with wave.open(beat['audio'],'rb') as stream:assert abs(stream.getnframes()/stream.getframerate()-4)<.001
+    # Recall pauses are allocated after actual speech without another synthesis.
+    pipe.config['video']['fixed_beat_durations']=False
+    beat['hold_after_seconds']=2
+    pipe.prepare_audio(section)
+    assert abs(beat['duration']-6.1)<.001 and pipe.narrator.calls==2
+    from media import fit_audio
+    padded=Path(temporary)/'recall.wav';fit_audio(Path(beat['audio']),padded,beat['duration'])
+    with wave.open(str(padded),'rb') as stream:
+        rate=stream.getframerate();stream.setpos(stream.getnframes()-2*rate);assert not any(stream.readframes(2*rate))
 print('PASS: exactly 2.5s digital silence precedes speech, subtitle timestamps shift, beat remains 6s, cache does not add silence twice, changed lead-in invalidates audio.')
+
+print("PASS: two-second recall silence follows speech in final padded audio, without re-synthesizing unchanged narration.")

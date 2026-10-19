@@ -1,5 +1,6 @@
 import importlib.util
 import re
+import math
 import numpy as np
 from pathlib import Path
 
@@ -130,6 +131,8 @@ class NarratedScene(Scene):
         beat = self.lesson_beats[index]
         self._beat_start = self.renderer.time
         self._beat_duration = beat["duration"]
+        self._beat_start_frame = round(self.renderer.time * config.frame_rate)
+        self._beat_frame_count = round(self._beat_duration * config.frame_rate)
         self._beat_index = index
         light = self.lesson_style.get("theme") == "light"
         portrait = self.lesson_style.get("orientation") == "portrait"
@@ -138,7 +141,8 @@ class NarratedScene(Scene):
         accent = "#287D68" if light else "#58C4DD"
         accent = (self.lesson_style.get("style_palette") or {}).get("primary", accent)
         muted = (self.lesson_style.get("style_palette") or {}).get("muted", "#627A73" if light else "#94A3B8")
-        brand = self.scene_text(self.lesson_style.get("brand", "教学 · 可视化课堂"), 16, muted)
+        brand_text = self.lesson_style.get("brand", "")
+        brand = self.scene_text(brand_text, 16, muted) if brand_text else VGroup()
         brand.move_to([0, top - 0.38, 0])
         title = self.scene_text(self.lesson_title, 29 if portrait else 32, accent)
         if title.width > width:
@@ -184,7 +188,8 @@ class NarratedScene(Scene):
         self.add(self._chrome)
 
     def remaining(self):
-        return max(0.0, self._beat_duration - (self.renderer.time - self._beat_start))
+        frames = self._beat_frame_count - (round(self.renderer.time * config.frame_rate) - self._beat_start_frame)
+        return max(0, frames) / config.frame_rate
 
     def play(self, *animations, **kwargs):
         remaining = self.remaining()
@@ -192,7 +197,16 @@ class NarratedScene(Scene):
             return
         prepared = self.compile_animations(*animations, **kwargs)
         if prepared and max(animation.run_time for animation in prepared) > remaining:
-            kwargs["run_time"] = remaining
+            for animation in prepared:
+                animation.run_time = remaining
+        # Manim uses arange(0, duration, 1/fps). Floating point tails can add
+        # a frame per beat, accumulating enough drift to trigger costly repairs.
+        # Quantize on the actual frame clock and stay just below the endpoint.
+        kwargs.pop("run_time", None)
+        available = round(remaining * config.frame_rate)
+        for animation in prepared:
+            frames = max(1, min(available, math.ceil(animation.run_time * config.frame_rate - 1e-6)))
+            animation.run_time = frames / config.frame_rate - 1e-9
         return super().play(*prepared, **kwargs)
 
     def wait(self, duration=1, **kwargs):

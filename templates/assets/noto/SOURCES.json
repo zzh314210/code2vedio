@@ -1,0 +1,30 @@
+{
+  "banana": {
+    "url": "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/2D/svg/emoji_u1f34c.svg",
+    "sha256": "e717415500e23f4119d53ea72b9df6434cfd126a0078d3da7d8a670dc360fea2"
+  },
+  "boat": {
+    "url": "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/2D/svg/emoji_u1f6f6.svg",
+    "sha256": "12cf932631ac8b428cfafc3308a6af5322602e7fca119e654fbe18134ce44eeb"
+  },
+  "bread": {
+    "url": "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/2D/svg/emoji_u1f35e.svg",
+    "sha256": "4f3a895df749b5b85ab783944f3dd52b8be5f09ed5c996bf9cbfdfe0a5ea7aea"
+  },
+  "island": {
+    "url": "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/2D/svg/emoji_u1f3dd.svg",
+    "sha256": "11577612fa1f952ad66cf7a6b4e00d266625083bc480e8a9a6f37546932d0b81"
+  },
+  "robot": {
+    "url": "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/2D/svg/emoji_u1f916.svg",
+    "sha256": "054b7dd712d5585015afdd678f4f3b7bb41a73cc6c20b572a50344693420f532"
+  },
+  "cat": {
+    "url": "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/2D/svg/emoji_u1f431.svg",
+    "sha256": "fbb19611e927d40ff0188f5d4da8457e8d83faeb18a3adc66d91cb5ef17f2f1c"
+  },
+  "book": {
+    "url": "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/2D/svg/emoji_u1f4d6.svg",
+    "sha256": "57c8932ae631000c13924155071b37e2a39022e9da7216321394db127c9f6af0"
+  }
+}

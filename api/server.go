@@ -35,6 +35,7 @@ var requestPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{16,80}$`)
 
 type userKey struct{}
 type Server struct {
+	CookieName   string
 	Billing      *Billing
 	Store        *Store
 	Origins      map[string]bool
@@ -117,12 +118,12 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request, u User) error {
 	if err = tx.Commit(); err != nil {
 		return err
 	}
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: token, Path: "/", MaxAge: sessionSeconds, HttpOnly: true, Secure: secureRequest(r), SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: s.CookieName, Value: token, Path: "/", MaxAge: sessionSeconds, HttpOnly: true, Secure: secureRequest(r), SameSite: http.SameSiteLaxMode})
 	return nil
 }
 func newServer(store *Store, dist, workerSocket string, origins []string) (*Server, error) {
 	dummy, _ := bcrypt.GenerateFromPassword([]byte(randomID(32)), bcrypt.DefaultCost)
-	s := &Server{Store: store, Origins: map[string]bool{}, Mux: http.NewServeMux(), Dummy: dummy}
+	s := &Server{CookieName: cookieName, Store: store, Origins: map[string]bool{}, Mux: http.NewServeMux(), Dummy: dummy}
 	for _, o := range origins {
 		s.Origins[strings.TrimRight(strings.TrimSpace(o), "/")] = true
 	}
@@ -161,7 +162,7 @@ func newServer(store *Store, dist, workerSocket string, origins []string) (*Serv
 	m.HandleFunc("PATCH /api/admin/users/{id}", s.status)
 	m.HandleFunc("POST /api/admin/users/{id}/credit", s.credit)
 	m.HandleFunc("GET /api/admin/users/{id}/ledger", s.ledger)
-	for _, pattern := range []string{"/api/jobs", "/api/jobs/", "/api/styles", "/api/sources", "/api/sources/", "/api/voices", "/api/voices/"} {
+	for _, pattern := range []string{"/api/jobs", "/api/jobs/", "/api/edits", "/api/edits/", "/api/styles", "/api/sources", "/api/sources/", "/api/voices", "/api/voices/"} {
 		m.HandleFunc(pattern, s.worker)
 	}
 	m.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { fail(w, 404, "接口不存在。") })
@@ -208,7 +209,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				u, err = s.Store.tokenUser(strings.TrimPrefix(authorization, "Bearer "))
 			} else {
 				var cookie *http.Cookie
-				cookie, err = r.Cookie(cookieName)
+				cookie, err = r.Cookie(s.CookieName)
 				if err == nil {
 					u, err = s.Store.authenticate(cookie.Value)
 				}
@@ -298,7 +299,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: secureRequest(r), SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: s.CookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: secureRequest(r), SameSite: http.SameSiteLaxMode})
 	reply(w, 200, map[string]bool{"ok": true})
 }
 func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
@@ -548,7 +549,7 @@ func (s *Server) ledger(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) worker(w http.ResponseWriter, r *http.Request) {
 	u := current(r)
-	if (r.Method != "GET" && strings.HasPrefix(r.URL.Path, "/api/sources")) || strings.HasPrefix(r.URL.Path, "/api/voices/") {
+	if (r.Method != "GET" && (strings.HasPrefix(r.URL.Path, "/api/sources") || strings.HasPrefix(r.URL.Path, "/api/edits") || strings.HasPrefix(r.URL.Path, "/api/jobs/"))) || strings.HasPrefix(r.URL.Path, "/api/voices/") {
 		if err := s.Store.limit("sources:"+u.ID, 30, 60); err != nil {
 			fail(w, 429, err.Error())
 			return
@@ -559,7 +560,7 @@ func (s *Server) worker(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, err)
 		return
 	}
-	if strings.HasPrefix(r.URL.Path, "/api/jobs/") {
+	if strings.HasPrefix(r.URL.Path, "/api/jobs/") || strings.HasPrefix(r.URL.Path, "/api/edits/") {
 		parts := strings.Split(r.URL.Path, "/")
 		if len(parts) > 3 {
 			frozen, e := s.Store.taskConfig(u.ID, parts[3])
@@ -587,6 +588,10 @@ func (s *Server) worker(w http.ResponseWriter, r *http.Request) {
 	r.Header.Del("Cookie")
 	r.Header.Set("X-Frame-Context", encoded)
 	r.Header.Set("X-Frame-Signature", hex.EncodeToString(mac.Sum(nil)))
-	r.Body = http.MaxBytesReader(w, r.Body, 510*1024*1024)
+	limit := int64(510 * 1024 * 1024)
+	if strings.HasPrefix(r.URL.Path, "/api/edits/") || strings.HasPrefix(r.URL.Path, "/api/jobs/") {
+		limit = 256 * 1024
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	s.Proxy.ServeHTTP(w, r)
 }

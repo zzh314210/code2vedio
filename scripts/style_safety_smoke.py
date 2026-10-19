@@ -56,7 +56,7 @@ def check_audio(pipeline):
     audio = pipeline.output / 'audio/section_1_01.wav'
     wav_file(audio)
     text = 'Real duration, incorrect metadata'
-    fingerprint = hashlib.sha256(json.dumps({'text': text, 'tts': public_config(pipeline.config['tts']), 'subtitle_version': 2}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    fingerprint = hashlib.sha256(json.dumps({'text': text, 'tts': public_config(pipeline.config['tts']), 'subtitle_version': 3, 'lead_in_seconds': 0.0}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     save_json(audio.with_suffix('.json'), {'duration': 0.1, 'fingerprint': fingerprint})
     section = {'id': 'section_1', 'title': 'Safety', 'beats': [{'narration': text, 'caption': 'Safety', 'visual': 'Vector'}]}
     pipeline.prepare_audio(section)
@@ -78,13 +78,14 @@ def check_audio(pipeline):
     def cached(name, *arguments):
         return copy.deepcopy(outline if name == 'outline.json' else storyboard if name == 'storyboard.json' else {'beats': [{'code': 'self.wait(1)'}]})
     pipeline.config['video']['target_duration'] = 1
-    with patch.object(pipeline, 'cached_json', side_effect=cached):
+    with patch.object(pipeline, 'cached_json', side_effect=cached), patch.object(pipeline.text, 'json', return_value=copy.deepcopy(storyboard)) as revise:
         try:
             pipeline.run(stop_after='audio')
         except ValueError as failure:
-            assert 'never truncate' in str(failure)
+            assert 'no speech was truncated' in str(failure)
         else:
             raise AssertionError('Short target accepted real longer speech')
+        assert revise.call_count == 2, 'Actual overlong speech must get bounded compression attempts, never truncation'
     pipeline.config['video']['target_duration'] = 3
     with patch.object(pipeline, 'cached_json', side_effect=cached):
         pipeline.run(stop_after='audio')
