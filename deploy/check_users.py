@@ -47,7 +47,7 @@ with sync_playwright() as pw:
  page.locator('.sidebar').get_by_role('button',name='用户管理',exact=True).click()
  assert page.get_by_role('heading',name='用户管理',exact=True).is_visible()
  page.locator('.sidebar').get_by_role('button',name='创作视频',exact=False).click()
- page.locator('#source-query').fill('复利 原理')
+ page.locator('#source-query').fill('复利')
  with page.expect_response(lambda r:r.url.endswith('/api/sources/search'),timeout=60000) as search:
   page.locator('.source-form').get_by_role('button',name='搜索',exact=True).click()
  assert search.value.status==200,search.value.text()

@@ -119,6 +119,8 @@ def styles():return [x for x in list_styles() if x['id'] in STYLE_IDS]
 
 def update_job(identity,**values):
     with lock:
+        if values.get('stage',jobs[identity].get('stage'))!=jobs[identity].get('stage') or (values.get('status')=='running' and jobs[identity].get('status')!='running'):
+            values['stage_started_at']=time.time()
         jobs[identity].update(values)
         jobs[identity]['updated_at']=time.time()
         record=jobs[identity].copy()
@@ -234,7 +236,7 @@ async def create_job(prompt:Annotated[str,Form()],style:Annotated[str,Form()],du
             import shutil
             shutil.rmtree(project,ignore_errors=True)
             raise HTTPException(409,'已有视频正在生成，请稍后重试。')
-        jobs[identity]={'id':identity,'owner_id':current_user.get()['id'],'prompt':prompt.strip(),'style':style,'duration':duration,'status':'queued','stage':'outline','message':'已加入生成队列','project':str(project)}
+        jobs[identity]={'id':identity,'owner_id':current_user.get()['id'],'prompt':prompt.strip(),'style':style,'duration':duration,'status':'queued','stage':'outline','message':'已加入生成队列','created_at':time.time(),'stage_started_at':time.time(),'project':str(project)}
     PlanningReview(project,auto_approve=auto_approve)
     update_job(identity,status='queued',auto_approve=auto_approve)
     executor.submit(work,identity,project,prompt.strip(),c,material)
@@ -345,7 +347,7 @@ class ReviewMode(BaseModel):
 
 class SourceSearch(BaseModel):
     query: str=Field(min_length=2,max_length=200)
-    platform: Literal['web','bing','wikipedia','bilibili','zhihu','library']='web'
+    platform: Literal['web','wikipedia','library']='wikipedia'
     limit: int=Field(default=6,ge=1,le=12)
 
 class SourceIngest(BaseModel):
@@ -496,11 +498,10 @@ def set_planning_mode(identity:str,mode:ReviewMode):
 @app.post('/api/sources/search')
 def search_sources(request:SourceSearch):
     try:
-        service=TeachingSources(user_settings().get('teaching_research',{}))
-        result=service.search(request.query,request.platform,request.limit)
-        # Search summaries are candidates only. Reading/indexing is a separate operation.
-        return {'results':[{k:v for k,v in item.items() if k in ('id','url','title','kind','text')} for item in result['results']]}
-    except Exception as e:raise HTTPException(502,'暂时无法搜索此来源，请换个平台或直接粘贴公开链接。')
+        service=TeachingSources({**user_settings().get('teaching_research',{}),'timeout':10})
+        result=service.search_readable(request.query,request.platform,request.limit)
+        return {'results':[{k:v for k,v in item.items() if k in ('id','url','title','kind','text')} for item in result['results']], 'unreadable_count':result.get('unreadable_count',0)}
+    except Exception as e:raise HTTPException(502,'百科服务暂时无法连接，请稍后再试；也可使用我的素材库或上传文稿。')
 
 
 @app.post('/api/sources/ingest')
@@ -510,7 +511,16 @@ def ingest_sources(request:SourceIngest):
         try:
             source=service.ingest(url)
             results.append({'status':'indexed',**{k:v for k,v in source.items() if k not in ('text','metadata')}})
-        except Exception as e:results.append({'url':url,'status':'failed','error':'未能取得正文或字幕。请确认链接公开可访问，或上传文稿。'})
+        except Exception as e:
+            import requests
+            from urllib.parse import urlsplit
+            host=urlsplit(url).hostname or ''
+            if host=='bilibili.com' or host.endswith('.bilibili.com'):
+                message='此视频未提供可读取的公开字幕，请上传字幕或文稿。'
+            elif isinstance(e,requests.exceptions.Timeout):message='原网站响应超时，请稍后重试或上传文稿。'
+            elif isinstance(e,requests.exceptions.HTTPError) and e.response is not None and e.response.status_code in (401,403,429):message='原网站限制自动读取或要求登录，请上传你有权使用的文稿。'
+            else:message='此链接没有可读取的完整正文，请换用公开文章或上传文稿。'
+            results.append({'url':url,'status':'failed','error':message})
     return {'results':results,**service.library.stats()}
 
 

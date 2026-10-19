@@ -64,7 +64,7 @@ curl https://vedio.myaihub.asia/api/jobs \
 
 最多10份文件，每份50 MB。multipart 使用已保存的个人配置；JSON 的 `config` 支持单任务覆盖。`reference_urls` 在 JSON 中为字符串数组，在 multipart 中为每行一个链接。`source_ids` 在 multipart 中为 JSON 数组字符串。
 
-- `POST /api/sources/search`：`{"query":"牛吃草 净消耗","platform":"bing","limit":6}`；来源为 `web`、`bing`、`wikipedia`、`bilibili`、`zhihu`、`library`。
+- `POST /api/sources/search`：`{"query":"复利","platform":"wikipedia","limit":6}`；来源为 `wikipedia`（百科正文）和 `library`（我的素材库）。旧 `web` 值兼容映射到百科；不可靠的 Bing、B站、知乎搜索已停用。搜索返回已读取、已归档的正文及 ID，可直接作为 source_ids 选用；unreadable_count 表示被过滤的页面数量。
 - `POST /api/sources/ingest`：`{"urls":["https://公开来源"]}`；正文读取成功才返回素材 ID。
 - `GET /api/sources`、`GET /api/sources/{id}`：仅当前用户的素材。
 

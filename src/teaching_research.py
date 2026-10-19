@@ -96,7 +96,7 @@ def extract_article(html):
     for node in soup.select("script,style,nav,header,footer,aside,form,noscript"):
         node.decompose()
     # Retain formulas/table cells as well as prose; do not treat snippets as full lessons.
-    candidates = [soup.select_one(s) for s in ("article", ".article-content", ".article_content", ".content-article", "#article", "main")]
+    candidates = [soup.select_one(s) for s in ("article", ".article-content", ".article_content", ".content-article", "#article", "#mw-content-text .mw-parser-output", "main")]
     article = next((x for x in candidates if x and len(x.get_text(strip=True)) >= 400), soup.body or soup)
     text = "\n".join(line.strip() for line in article.get_text("\n", strip=True).splitlines() if line.strip())
     if len(text) < 400 or any(phrase in title.lower() for phrase in ("captcha", "验证", "access denied")):
@@ -168,7 +168,7 @@ def prepare_research(topic, materials, settings, directory, gateway):
             searches.append(result)
             candidates.extend(result["results"])
             if query_index == 0:
-                for platform in settings.get("platforms", ["bilibili", "zhihu"]):
+                for platform in settings.get("platforms", []):
                     try:
                         extra = service.search(query, platform=platform, limit=2)
                         searches.append(extra)
