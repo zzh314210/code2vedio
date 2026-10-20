@@ -72,10 +72,10 @@ export default function StudioGuide({userId,enabled,ready,variant='create'}:{use
       tour.refresh();
     });
     let content=[
-      {tone:'model',color:'#334155',label:'模型配置',title:'连接你的模型服务',element:visibleTarget('[data-guide="config"]'),
-        action:userId?'打开「模型配置」，填好这三项':'登录后打开「模型配置」',
-        detail:'<div class="guide-tokens"><span>接口地址</span><span>API Key</span><span>模型名称</span></div>',
-        note:'内容生成、视觉审核分别配置。模型可手填或从列表选择。'},
+      {tone:'model',color:'#334155',label:'模型配置',title:'选择创作模型',element:visibleTarget('[data-guide="config"]'),
+        action:userId?'选择平台模型，或使用自己的 API':'登录后打开「模型配置」',
+        detail:'<div class="guide-tokens"><span>平台模型</span><span>自备 API</span><span>保存一次</span></div>',
+        note:'平台模型先充值再使用，每笔扣费可查。自备 API 不扣站内余额。'},
       {tone:'brief',color:'#1d4ed8',label:'创作需求',title:'说清你想做什么视频',element:'#prompt',
         action:'写主题、受众和讲解重点',
         detail:'<p>例如：给初学者讲复利，用曲线对比单利与复利。</p>',

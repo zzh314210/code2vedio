@@ -34,6 +34,16 @@ with tempfile.TemporaryDirectory() as tmp:
  event=json.loads(Path(config['usage_file']).read_text().splitlines()[-1])
  assert event['model']=='actual-billed-model' and event['response_id']=='stream-response-123'
  assert event['input_tokens']==100 and event['output_tokens']==30
+ # Invalid cache counts must not be silently clamped into a billable amount.
+ record_usage(config,'text',{'prompt_tokens':10,'completion_tokens':5,'prompt_tokens_details':{'cached_tokens':11}})
+ assert not json.loads(Path(config['usage_file']).read_text().splitlines()[-1])['metered']
+ # Model requests reserve from a conservative text bound and expose stage/timing.
+ from billing_client import BillingError
+ captures=[]
+ with patch('model_gateway.billing_call',side_effect=lambda settings,op,data:captures.append((op,data)) or {'billing':False}),patch.object(gateway.client.chat.completions,'create',return_value=Chunks()):
+  gateway.request('中文 prompt')
+ assert captures[0][1]['input_bound']==len('中文 prompt'.encode('utf8'))+1024
+ assert event['duration_ms']>=0
  gateway.client.close()
  transport=PublicTransport()
  with patch('public_transport.socket.getaddrinfo',return_value=[(2,1,6,'',('127.0.0.1',443))]):

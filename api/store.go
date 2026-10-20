@@ -113,6 +113,10 @@ func openStore(dir string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := store.initPlatform(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return store, nil
 }
 
@@ -197,6 +201,7 @@ func (s *Store) config(uid string) (PersonalConfig, error) {
 		return c, err
 	}
 	err = json.Unmarshal(raw, &c)
+	c.Saved = err == nil
 	return c, err
 }
 func (s *Store) saveConfig(uid string, c PersonalConfig) error {
@@ -237,6 +242,7 @@ func (s *Store) limit(key string, max int, seconds int64) error {
 }
 
 type Entry struct {
+	ActorName string `json:"actor_name,omitempty"`
 	ID        string `json:"id"`
 	UserID    string `json:"user_id"`
 	Amount    int64  `json:"amount_cents"`
@@ -253,6 +259,9 @@ func scanEntry(row scanner) (Entry, error) {
 	return e, err
 }
 func (s *Store) credit(actor, uid string, amount int64, note, requestID string) (Entry, error) {
+	if strings.HasPrefix(requestID, "usage-") {
+		return Entry{}, errors.New("此操作凭证前缀保留给系统计费，请使用新的凭证。")
+	}
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return Entry{}, err
@@ -272,10 +281,17 @@ func (s *Store) credit(actor, uid string, amount int64, note, requestID string) 
 	if err = tx.QueryRow("SELECT balance_cents FROM users WHERE id=?", uid).Scan(&balance); err != nil {
 		return Entry{}, errors.New("用户不存在。")
 	}
-	if amount <= 0 || amount > 100000000 || balance > 10000000000-amount {
+	if amount == 0 || amount > 100000000 || amount < -100000000 || balance+amount < 0 || balance+amount > 10000000000 {
 		return Entry{}, errors.New("充值金额超出范围。")
 	}
-	e := Entry{randomID(16), uid, amount, balance + amount, note, actor, requestID, time.Now().Unix()}
+	var held int64
+	if err = tx.QueryRow("SELECT COALESCE(sum(reserved_cents),0) FROM billing_calls WHERE user_id=? AND status IN ('reserved','unmetered')", uid).Scan(&held); err != nil {
+		return Entry{}, err
+	}
+	if balance+amount < held {
+		return Entry{}, errors.New("余额调整不能占用进行中调用的预留金额。")
+	}
+	e := Entry{ID: randomID(16), UserID: uid, Amount: amount, Balance: balance + amount, Note: note, ActorID: actor, RequestID: requestID, CreatedAt: time.Now().Unix()}
 	if _, err = tx.Exec("UPDATE users SET balance_cents=? WHERE id=?", e.Balance, uid); err != nil {
 		return e, err
 	}

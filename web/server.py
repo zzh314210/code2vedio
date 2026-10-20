@@ -67,6 +67,8 @@ def job_settings(record, frozen=None):
     # Retain project layout but never reuse another user's credentials or library.
     result=restore_credentials(frozen,current)
     for role in ('text','vision','tts'):result[role]=copy.deepcopy(current[role])
+    for resource in ('memory','cpus','pids_limit'):
+        if resource in current.get('execution',{}):result.setdefault('execution',{})[resource]=current['execution'][resource]
     result.setdefault('teaching_research',{})['library']=current['teaching_research']['library']
     return result
 

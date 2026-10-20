@@ -138,6 +138,25 @@ def task_fingerprint(topic, config, materials):
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+def resume_vision_changed(topic, config, materials, existing):
+    """Allow operator resource-limit changes without re-buying identical model output."""
+    if task_fingerprint(topic, config, materials)==existing['fingerprint']:
+        return False
+    old=existing.get('config',{})
+    limits={'memory','cpus','pids_limit'}
+    current_execution=config.get('execution',{})
+    old_execution=old.get('execution',{})
+    if {k:v for k,v in current_execution.items() if k not in limits}!={k:v for k,v in old_execution.items() if k not in limits}:
+        raise ValueError('渲染后端与缓存不一致，请创建新项目。')
+    previous=json.loads(json.dumps(config))
+    if 'execution' in old:previous['execution']=old_execution
+    else:previous.pop('execution',None)
+    previous['vision']=old.get('vision',{})
+    if task_fingerprint(topic,previous,materials)!=existing['fingerprint']:
+        raise ValueError('模型/素材/配置与缓存不一致，请使用新输出目录，避免复用过期分镜/配音')
+    return config.get('vision',{})!=old.get('vision',{})
+
+
 class VideoPipeline:
     def __init__(self, topic, config, output, materials=None, pages=None, resume=False, on_event=None, project=None, references=None, planning_gate=None):
         self.planning_gate = planning_gate
@@ -226,11 +245,7 @@ class VideoPipeline:
                 raise ValueError("输出目录已存在任务；请使用新目录或 --resume")
             if existing.get("inputs_fingerprint") not in (None, inputs_hash):
                 raise ValueError("项目提示词、示例或绘图代码已修改，请创建新项目版本，不能复用旧缓存")
-            if existing["fingerprint"] != fingerprint:
-                previous_config = {**public, "vision": existing.get("config", {}).get("vision", {})}
-                vision_changed = task_fingerprint(topic, previous_config, self.materials) == existing["fingerprint"]
-                if not vision_changed:
-                    raise ValueError("模型/素材/配置与缓存不一致，请使用新输出目录，避免复用过期分镜/配音")
+            vision_changed = resume_vision_changed(topic, public, self.materials, existing)
             self.relocate_caches(existing)
             if vision_changed:
                 for stale_review in (self.output / "reviewed.json", *self.output.glob("*_review_*.json")):
@@ -331,6 +346,8 @@ class VideoPipeline:
         settings = self.config[role]
         snapshot = self.style_snapshot or self.style.snapshot()
         save_json(self.request_directory / (name + ".json"), {"role": role, "stage": self.active_stage, "model": settings["model"], "protocol": settings["protocol"], "max_tokens": settings.get("max_tokens"), "style_id": snapshot["id"], "style_version": snapshot.get("version"), "style_hash": snapshot.get("content_hash"), "images": [str(file) for file in images]})
+
+        return self.active_stage or "prepare"
 
     def cached_json(self, filename, prompt, validator):
         file = self.output / filename
@@ -615,7 +632,17 @@ class VideoPipeline:
 
     def render_with_repairs(self, section, snippets, start_revision):
         from execution import RenderInfrastructureError
-        for attempt in range(self.config["video"]["fix_attempts"] + 1):
+        state_file=self.output / f"{section['id']}_repair_{start_revision}.json"
+        seed=hashlib.sha256(json.dumps({'section':section,'snippets':snippets},sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+        first_attempt=0
+        if state_file.exists():
+            state=json.loads(state_file.read_text(encoding='utf8'))
+            candidate=state.get('attempt')
+            if state.get('seed')==seed and isinstance(candidate,int) and 0<=candidate<=self.config['video']['fix_attempts']:
+                self.validate_snippets(state['snippets'],len(section['beats']))
+                snippets=state['snippets'];first_attempt=candidate
+        for attempt in range(first_attempt,self.config["video"]["fix_attempts"] + 1):
+            save_json(state_file,{'seed':seed,'attempt':attempt,'snippets':snippets})
             revision = start_revision + attempt
             save_json(self.output / f"{section['id']}_code_{revision}.json", snippets)
             try:

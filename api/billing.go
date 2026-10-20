@@ -21,7 +21,10 @@ import (
 
 // Prices are integer micro-yuan per million tokens. No floating-point money or group multipliers.
 type Rate struct {
+	Note     string `json:"note,omitempty"`
 	Model    string `json:"model"`
+	Role     string `json:"role,omitempty"`
+	Revision int64  `json:"revision,omitempty"`
 	Input    int64  `json:"input_micro_per_million"`
 	Output   int64  `json:"output_micro_per_million"`
 	Cached   int64  `json:"cached_micro_per_million"`
@@ -44,7 +47,7 @@ type Billing struct {
 }
 
 func newBilling(store *Store, root string) (*Billing, error) {
-	b := &Billing{Store: store, Enabled: os.Getenv("C2V_BILLING_ENABLED") == "true", ChargeBYOK: os.Getenv("C2V_CHARGE_BYOK") == "true"}
+	b := &Billing{Store: store, Enabled: os.Getenv("C2V_BILLING_ENABLED") == "true", ChargeBYOK: false}
 	raw, err := os.ReadFile(filepath.Join(root, "api/pricing/official-20261019.json"))
 	if err == nil {
 		err = json.Unmarshal(raw, &b.Prices)
@@ -54,6 +57,9 @@ func newBilling(store *Store, root string) (*Billing, error) {
 	}
 	_, err = store.DB.Exec(`CREATE TABLE IF NOT EXISTS billing_calls(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),job_id TEXT NOT NULL,model TEXT NOT NULL,role TEXT NOT NULL,price TEXT NOT NULL,reserved_cents INTEGER NOT NULL,cost_micro INTEGER NOT NULL DEFAULT 0,charged_cents INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL,usage TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL);
  CREATE INDEX IF NOT EXISTS billing_calls_user ON billing_calls(user_id,status);`)
+	if err == nil {
+		err = b.migrateUsage()
+	}
 	return b, err
 }
 func (b *Billing) rate(model, endpoint string, at time.Time) (Rate, error) {
@@ -85,29 +91,43 @@ func tokenCost(r Rate, input, output, cached int64) (int64, error) {
 }
 
 type meterRequest struct {
-	ID        string          `json:"id"`
-	UserID    string          `json:"user_id"`
-	JobID     string          `json:"job_id"`
-	Model     string          `json:"model"`
-	Role      string          `json:"role"`
-	MaxOutput int64           `json:"max_output"`
-	Input     int64           `json:"input_tokens"`
-	Output    int64           `json:"output_tokens"`
-	Cached    int64           `json:"cached_input_tokens"`
-	Metered   bool            `json:"metered"`
-	Usage     json.RawMessage `json:"usage"`
+	AdminActor         string          `json:"-"`
+	ReconciliationNote string          `json:"-"`
+	ID                 string          `json:"id"`
+	UserID             string          `json:"user_id"`
+	JobID              string          `json:"job_id"`
+	Model              string          `json:"model"`
+	Role               string          `json:"role"`
+	MaxOutput          int64           `json:"max_output"`
+	InputBound         int64           `json:"input_bound"`
+	DurationMS         int64           `json:"duration_ms"`
+	FirstTokenMS       int64           `json:"first_token_ms"`
+	ResponseID         string          `json:"response_id"`
+	ErrorType          string          `json:"error_type"`
+	Rejected           bool            `json:"rejected"`
+	Stream             bool            `json:"stream"`
+	Stage              string          `json:"stage"`
+	Input              int64           `json:"input_tokens"`
+	Output             int64           `json:"output_tokens"`
+	Cached             int64           `json:"cached_input_tokens"`
+	Metered            bool            `json:"metered"`
+	Usage              json.RawMessage `json:"usage"`
 }
 
 func (b *Billing) authorize(d meterRequest) (map[string]any, error) {
-	if !b.Enabled {
-		return map[string]any{"billing": false}, nil
-	}
 	cfg, err := b.Store.taskConfig(d.UserID, d.JobID)
+	if errors.Is(err, sql.ErrNoRows) {
+		cfg, err = b.Store.config(d.UserID)
+		if cfg.UsePlatform {
+			return nil, errors.New("平台任务缺少固定配置，请重新创建任务。")
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
-	if !b.Enabled || (!cfg.UsePlatform && !b.ChargeBYOK) {
-		return map[string]any{"billing": false}, nil
+	paid := cfg.UsePlatform
+	if paid && !b.Enabled {
+		return nil, errors.New("平台计费已暂停，请稍后再试。")
 	}
 	ch := cfg.Text
 	if d.Role == "vision" {
@@ -125,20 +145,54 @@ func (b *Billing) authorize(d meterRequest) (map[string]any, error) {
 	if !allowed {
 		return nil, errors.New("模型与任务配置不一致。")
 	}
-	rate, err := b.rate(d.Model, ch.BaseURL, time.Now())
-	if err != nil {
-		return nil, err
+	rate := Rate{Model: d.Model, MaxInput: 1000000}
+	if paid {
+		found := false
+		for _, p := range cfg.PlatformPrices {
+			if p.Model == d.Model && (p.Role == "" || p.Role == d.Role) {
+				rate = p
+				found = true
+				break
+			}
+		}
+		if !found {
+			rate, err = b.rate(d.Model, ch.BaseURL, time.Now())
+		} else if rate.Offpeak {
+			hour := (time.Now().UTC().Hour() + 8) % 24
+			if hour >= 22 || hour < 8 {
+				rate.Input /= 2
+				rate.Output /= 2
+				rate.Cached /= 2
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		prepaid, e := b.Store.prepaid(d.UserID)
+		if e != nil {
+			return nil, e
+		}
+		if !prepaid {
+			return nil, errors.New("使用平台模型需先充值 5 元，请前往余额与账单。")
+		}
 	}
 	if d.MaxOutput <= 0 || d.MaxOutput > 1000000 {
 		return nil, errors.New("输出上限无效。")
 	}
-	// Conservative reservation: full supported input context plus requested maximum output.
-	// Actual unused credit is released immediately when upstream usage arrives.
-	maximum, err := tokenCost(rate, rate.MaxInput, d.MaxOutput, 0)
+	// UTF-8 bytes plus protocol overhead bound text tokenization; image calls reserve full context.
+	bound := d.InputBound
+	if bound <= 0 || bound > rate.MaxInput {
+		bound = rate.MaxInput
+	}
+	maximum, err := tokenCost(rate, bound, d.MaxOutput, 0)
 	if err != nil {
 		return nil, err
 	}
 	reserved := ceil(maximum, 10000)
+	mode := "byok"
+	if paid {
+		mode = "platform"
+	}
 	price, _ := json.Marshal(rate)
 	tx, err := b.Store.DB.Begin()
 	if err != nil {
@@ -172,10 +226,13 @@ func (b *Billing) authorize(d meterRequest) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if _, err = tx.Exec("UPDATE billing_calls SET mode=?,stage=?,stream=? WHERE id=?", mode, truncate(d.Stage, 60), d.Stream, d.ID); err != nil {
+		return nil, err
+	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
-	return map[string]any{"billing": true, "reserved_cents": reserved}, nil
+	return map[string]any{"billing": paid, "reserved_cents": reserved}, nil
 }
 func (b *Billing) settle(d meterRequest) (map[string]any, error) {
 	tx, err := b.Store.DB.Begin()
@@ -183,9 +240,9 @@ func (b *Billing) settle(d meterRequest) (map[string]any, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	var uid, job, price, status string
+	var uid, job, price, status, mode string
 	var reserve, charged int64
-	err = tx.QueryRow("SELECT user_id,job_id,price,status,reserved_cents,charged_cents FROM billing_calls WHERE id=?", d.ID).Scan(&uid, &job, &price, &status, &reserve, &charged)
+	err = tx.QueryRow("SELECT user_id,job_id,price,status,reserved_cents,charged_cents,mode FROM billing_calls WHERE id=?", d.ID).Scan(&uid, &job, &price, &status, &reserve, &charged, &mode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return map[string]any{"billing": false}, nil
 	}
@@ -195,11 +252,31 @@ func (b *Billing) settle(d meterRequest) (map[string]any, error) {
 	if uid != d.UserID || job != d.JobID {
 		return nil, errors.New("计费凭证不属于此任务。")
 	}
-	if status == "settled" {
+	if status == "settled" || status == "rejected" {
 		return map[string]any{"billing": true, "charged_cents": charged}, nil
 	}
+	if d.AdminActor == "" {
+		if _, err = tx.Exec("UPDATE billing_calls SET duration_ms=?,first_token_ms=?,response_id=?,actual_model=?,error_type=?,finished_at=? WHERE id=?", max(d.DurationMS, 0), max(d.FirstTokenMS, 0), truncate(d.ResponseID, 200), truncate(d.Model, 150), truncate(d.ErrorType, 80), time.Now().Unix(), d.ID); err != nil {
+			return nil, err
+		}
+	}
+	if d.Rejected && !d.Metered {
+		if _, err = tx.Exec("UPDATE billing_calls SET status='rejected',reserved_cents=0 WHERE id=?", d.ID); err != nil {
+			return nil, err
+		}
+		return map[string]any{"billing": mode == "platform", "charged_cents": 0}, tx.Commit()
+	}
+	if d.AdminActor != "" {
+		if _, err = tx.Exec("UPDATE billing_calls SET reconciliation_note=? WHERE id=?", d.ReconciliationNote, d.ID); err != nil {
+			return nil, err
+		}
+		audit, _ := json.Marshal(map[string]any{"call_id": d.ID, "input_tokens": d.Input, "output_tokens": d.Output, "cached_input_tokens": d.Cached, "note": d.ReconciliationNote})
+		if _, err = tx.Exec("INSERT INTO admin_audit VALUES(?,?,?,?,?)", randomID(16), d.AdminActor, "usage.reconcile", string(audit), time.Now().Unix()); err != nil {
+			return nil, err
+		}
+	}
 	if !d.Metered {
-		if _, err = tx.Exec("UPDATE billing_calls SET status='unmetered',usage=? WHERE id=?", string(d.Usage), d.ID); err != nil {
+		if _, err = tx.Exec("UPDATE billing_calls SET status='unmetered',usage=? WHERE id=?", string(mustJSON(safeUsage(d.Usage))), d.ID); err != nil {
 			return nil, err
 		}
 		if err = tx.Commit(); err != nil {
@@ -211,7 +288,7 @@ func (b *Billing) settle(d meterRequest) (map[string]any, error) {
 	if err = json.Unmarshal([]byte(price), &rate); err != nil {
 		return nil, err
 	}
-	if d.Model != "" && d.Model != rate.Model {
+	if mode == "platform" && d.Model != "" && d.Model != rate.Model {
 		compatible := false
 		for _, candidate := range b.Prices.Rates {
 			if candidate.Model == d.Model && (candidate.Input == rate.Input && candidate.Output == rate.Output && candidate.Cached == rate.Cached || candidate.Offpeak && candidate.Input/2 == rate.Input && candidate.Output/2 == rate.Output && candidate.Cached/2 == rate.Cached) {
@@ -233,7 +310,19 @@ func (b *Billing) settle(d meterRequest) (map[string]any, error) {
 	// Round the accumulated job total once to a cent, not each model invocation.
 	charge := ceil(previousCost+cost, 10000) - previousCharge
 	if charge > reserve {
-		return nil, errors.New("实际费用超过预占上限，需要人工核对。")
+		if d.AdminActor == "" {
+			return nil, errors.New("实际费用超过预占上限，需要人工核对。")
+		}
+		var otherHeld, balance int64
+		if err = tx.QueryRow("SELECT COALESCE(sum(reserved_cents),0) FROM billing_calls WHERE user_id=? AND id!=? AND status IN ('reserved','unmetered')", uid, d.ID).Scan(&otherHeld); err != nil {
+			return nil, err
+		}
+		if err = tx.QueryRow("SELECT balance_cents FROM users WHERE id=?", uid).Scan(&balance); err != nil {
+			return nil, err
+		}
+		if balance-otherHeld < charge {
+			return nil, errors.New("核对金额超过可用余额，请先处理充值后再结算。")
+		}
 	}
 	result, err := tx.Exec("UPDATE users SET balance_cents=balance_cents-? WHERE id=? AND balance_cents>=?", charge, uid, charge)
 	if err != nil {
@@ -247,7 +336,7 @@ func (b *Billing) settle(d meterRequest) (map[string]any, error) {
 	if err = tx.QueryRow("SELECT balance_cents FROM users WHERE id=?", uid).Scan(&balance); err != nil {
 		return nil, err
 	}
-	usage, _ := json.Marshal(map[string]any{"input_tokens": d.Input, "output_tokens": d.Output, "cached_input_tokens": d.Cached, "upstream": d.Usage})
+	usage, _ := json.Marshal(map[string]any{"input_tokens": d.Input, "output_tokens": d.Output, "cached_input_tokens": d.Cached, "upstream": safeUsage(d.Usage)})
 	if _, err = tx.Exec("UPDATE billing_calls SET cost_micro=?,charged_cents=?,reserved_cents=0,status='settled',usage=? WHERE id=?", cost, charge, string(usage), d.ID); err != nil {
 		return nil, err
 	}
@@ -296,6 +385,9 @@ func (s *Server) internalMeter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		if r.URL.Path == "/internal/billing/settle" {
+			s.Store.DB.Exec("UPDATE billing_calls SET status='unmetered',error_type=? WHERE id=? AND user_id=? AND job_id=? AND status NOT IN ('settled','rejected')", "SettlementReviewRequired", d.ID, d.UserID, d.JobID)
+		}
 		fail(w, 402, err.Error())
 		return
 	}
@@ -303,9 +395,52 @@ func (s *Server) internalMeter(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) billingInfo(w http.ResponseWriter, r *http.Request) {
 	var held int64
-	s.Store.DB.QueryRow("SELECT COALESCE(sum(reserved_cents),0) FROM billing_calls WHERE user_id=? AND status IN ('reserved','unmetered')", current(r).ID).Scan(&held)
-	_, platformErr := s.Store.platform()
-	reply(w, 200, map[string]any{"platform_available": platformErr == nil && s.Billing.Enabled, "enabled": s.Billing.Enabled, "charge_byok": s.Billing.ChargeBYOK, "held_cents": held, "currency": "CNY", "rates": s.Billing.Prices.Rates, "verified_at": s.Billing.Prices.VerifiedAt, "service_fee_cents": 0})
+	if err := s.Store.DB.QueryRow("SELECT COALESCE(sum(reserved_cents),0) FROM billing_calls WHERE user_id=? AND status IN ('reserved','unmetered')", current(r).ID).Scan(&held); err != nil {
+		s.internal(w, err)
+		return
+	}
+	catalog, err := s.Store.catalog()
+	if err != nil {
+		s.internal(w, err)
+		return
+	}
+	prepaid, err := s.Store.prepaid(current(r).ID)
+	if err != nil {
+		s.internal(w, err)
+		return
+	}
+	u, err := s.Store.user(current(r).ID)
+	if err != nil {
+		s.internal(w, err)
+		return
+	}
+	c, err := s.Store.config(u.ID)
+	if err != nil {
+		s.internal(w, err)
+		return
+	}
+	c.UsePlatform = true
+	if id := r.URL.Query().Get("text_model"); id != "" {
+		c.PlatformText = id
+	}
+	if id := r.URL.Query().Get("vision_model"); id != "" {
+		c.PlatformVision = id
+	}
+	effective, e := s.effective(c)
+	low, high := int64(0), int64(0)
+	duration, _ := strconv.Atoi(r.URL.Query().Get("duration"))
+	if duration <= 0 {
+		duration = 60
+	}
+	duration = min(duration, 600)
+	if e == nil && len(effective.PlatformPrices) == 2 {
+		scenes := int64(max(2, duration/15))
+		t, _ := tokenCost(effective.PlatformPrices[0], 20000+scenes*6000, 5000+scenes*4500, 0)
+		v, _ := tokenCost(effective.PlatformPrices[1], scenes*12000, scenes*1000, 0)
+		low = ceil(t+v, 10000)
+		high = low * 3
+	}
+	reply(w, 200, map[string]any{"platform_available": s.platformAvailable(catalog), "enabled": s.Billing.Enabled, "charge_byok": false, "held_cents": held, "balance_cents": u.Balance, "available_cents": max(0, u.Balance-held), "prepaid": prepaid, "minimum_deposit_cents": 500, "currency": "CNY", "catalog": catalog.public(false), "estimate_low_cents": low, "estimate_high_cents": high, "service_fee_cents": 0})
 }
 
 func (s *Store) platform() (PersonalConfig, error) {
@@ -387,6 +522,31 @@ func (s *Server) effective(c PersonalConfig) (PersonalConfig, error) {
 	if !s.Billing.Enabled {
 		return c, errors.New("平台模型服务尚未开通计费，请先使用个人 API 配置。")
 	}
+	catalog, err := s.Store.catalog()
+	if err == nil && len(catalog.Models) > 0 {
+		text, e := catalog.model(c.PlatformText, "text")
+		if e != nil {
+			return c, e
+		}
+		vision, e := catalog.model(c.PlatformVision, "vision")
+		if e != nil {
+			return c, e
+		}
+		if c.TTS.Provider != "edge" {
+			return c, errors.New("平台模式仅支持免费在线配音。")
+		}
+		c.Text = text.Channel
+		c.Vision = vision.Channel
+		c.VisionInherit = false
+		c.PlatformText = text.ID
+		c.PlatformVision = vision.ID
+		text.Price.Role = "text"
+		vision.Price.Role = "vision"
+		text.Price.Revision = catalog.Revision
+		vision.Price.Revision = catalog.Revision
+		c.PlatformPrices = []Rate{text.Price, vision.Price}
+		return c, nil
+	}
 	platform, err := s.Store.platform()
 	if err != nil {
 		return c, errors.New("平台模型服务尚未配置。")
@@ -397,4 +557,15 @@ func (s *Server) effective(c PersonalConfig) (PersonalConfig, error) {
 	}
 	platform.TTS = c.TTS
 	return platform, nil
+}
+
+func mustJSON(v any) []byte { raw, _ := json.Marshal(v); return raw }
+
+func (s *Server) platformAvailable(c PlatformCatalog) bool {
+	if !s.Billing.Enabled {
+		return false
+	}
+	_, a := c.model(c.DefaultText, "text")
+	_, b := c.model(c.DefaultVision, "vision")
+	return a == nil && b == nil
 }

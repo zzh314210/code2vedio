@@ -179,10 +179,20 @@ func (s *Server) prepareJob(w http.ResponseWriter, r *http.Request, c PersonalCo
 		}
 		c = *override
 	}
+	if !c.Saved && !c.UsePlatform && c.Text.APIKey == "" && c.Text.Model == "" && c.Text.BaseURL == "" {
+		catalog, e := s.Store.catalog()
+		if e == nil && len(catalog.Models) > 0 && s.Billing.Enabled {
+			c.UsePlatform = true
+		}
+	}
 	var err error
 	c, err = s.effective(c)
 	if err != nil {
 		fail(w, 400, err.Error())
+		return c, "", false
+	}
+	if err = s.platformAdmission(current(r).ID, c); err != nil {
+		fail(w, 402, err.Error())
 		return c, "", false
 	}
 	public := c.public()
@@ -203,5 +213,5 @@ type stringReadCloser struct{ *strings.Reader }
 func (s stringReadCloser) Close() error        { return nil }
 func readCloser(value string) stringReadCloser { return stringReadCloser{strings.NewReader(value)} }
 func bearerAllowed(path string) bool {
-	return path == "/api/edits" || strings.HasPrefix(path, "/api/edits/") || path == "/api/config" || path == "/api/config/models" || path == "/api/jobs" || strings.HasPrefix(path, "/api/jobs/") || path == "/api/styles" || path == "/api/sources" || strings.HasPrefix(path, "/api/sources/") || path == "/api/voices" || strings.HasPrefix(path, "/api/voices/")
+	return path == "/api/usage" || path == "/api/billing" || path == "/api/wallet" || path == "/api/wallet/ledger" || path == "/api/edits" || strings.HasPrefix(path, "/api/edits/") || path == "/api/config" || path == "/api/config/models" || path == "/api/jobs" || strings.HasPrefix(path, "/api/jobs/") || path == "/api/styles" || path == "/api/sources" || strings.HasPrefix(path, "/api/sources/") || path == "/api/voices" || strings.HasPrefix(path, "/api/voices/")
 }

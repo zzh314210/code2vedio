@@ -46,7 +46,7 @@ class ModelGateway:
         self.on_request = on_request
         self.client = OpenAI(
             api_key=settings["api_key"], base_url=settings["base_url"].rstrip("/"),
-            timeout=float(settings.get("timeout", 180)), max_retries=int(settings.get("max_retries", 2)), **public_client(settings),
+            timeout=float(settings.get("timeout", 180)), max_retries=0 if settings.get("billing_context") else int(settings.get("max_retries", 2)), **public_client(settings),
         )
         self.usage_recorded=False
         self.attempt_id=uuid.uuid4().hex
@@ -68,14 +68,15 @@ class ModelGateway:
             self.settings = {**self.settings, "model": model}
             self.attempt_id=uuid.uuid4().hex
             self.usage_recorded=False
+            self.started_at=time.monotonic()
+            self.first_token_ms=0
             try:
                 return self._request(prompt, images, max_tokens)
             except BillingError:
                 raise
             except Exception as failure:
                 if not self.usage_recorded:
-                    record_usage(self.settings,self.role,attempt_id=self.attempt_id,extra={'error_type':type(failure).__name__})
-                    billing_call(self.settings,'settle',{'id':self.attempt_id,'metered':False,'usage':{'error_type':type(failure).__name__}})
+                    record_usage(self.settings,self.role,attempt_id=self.attempt_id,extra={'error_type':type(failure).__name__,'rejected':getattr(failure,'status_code',None) in (400,401,403,404,405,413,422,429),'duration_ms':int((time.monotonic()-self.started_at)*1000)})
                 # Keep archived quota-only policies compatible; new fallback_models
                 # explicitly authorize failover for every failed request and role.
                 if not self.settings.get("fallback_models") and legacy:
@@ -89,15 +90,16 @@ class ModelGateway:
         # Preserve the SDK exception type/status for the existing error handler.
         raise failures[-1]
 
-    def meter(self, usage, response=None):
+    def meter(self, usage, response=None, error_type=""):
         if self.usage_recorded:return
-        record_usage(self.settings,self.role,usage,getattr(response,'id',None),getattr(response,'model',None),self.attempt_id)
+        record_usage(self.settings,self.role,usage,getattr(response,'id',None),getattr(response,'model',None),self.attempt_id,extra={'error_type':error_type,'duration_ms':int((time.monotonic()-getattr(self,'started_at',time.monotonic()))*1000),'first_token_ms':getattr(self,'first_token_ms',0)})
         self.usage_recorded=True
 
     def _request(self, prompt, images=None, max_tokens=None):
         if self.on_request:
-            self.on_request(self.role, prompt, images or [])
-        billing_call(self.settings,'authorize',{'id':self.attempt_id,'model':self.settings['model'],'role':self.role,'max_output':int(max_tokens or self.settings.get('max_tokens',12000))})
+            stage=self.on_request(self.role, prompt, images or [])
+            if stage:self.settings["usage_stage"]=stage
+        billing_call(self.settings,'authorize',{'id':self.attempt_id,'model':self.settings['model'],'role':self.role,'max_output':int(max_tokens or self.settings.get('max_tokens',12000)),'input_bound':0 if images else len(prompt.encode('utf-8'))+1024,'stream':bool(self.settings.get('stream',False)),'stage':self.settings.get('usage_stage','')})
         limit = int(max_tokens or self.settings.get("max_tokens", 12000))
         extra = self.settings.get("extra_body", {})
         if self.settings["protocol"] == "responses":
@@ -132,6 +134,7 @@ class ModelGateway:
                 reasoning_chars = 0
                 stream_response_id = None
                 stream_model = None
+                stream_error = ""
                 try:
                     for chunk in response:
                         stream_response_id = getattr(chunk, "id", None) or stream_response_id
@@ -143,6 +146,7 @@ class ModelGateway:
                             usage = chunk.usage
                         for choice in chunk.choices:
                             if choice.delta.content:
+                                if not self.first_token_ms:self.first_token_ms=int((time.monotonic()-self.started_at)*1000)
                                 fragments.append(choice.delta.content)
                             reasoning_chars += len(getattr(choice.delta, "reasoning_content", None) or "")
                             if choice.finish_reason:
@@ -150,8 +154,11 @@ class ModelGateway:
                         if time.monotonic() - last_progress >= 20:
                             print(f"[{self.role}] model stream: {elapsed:.0f}s, content={sum(map(len, fragments))} chars, reasoning={reasoning_chars} chars", flush=True)
                             last_progress = time.monotonic()
+                except Exception as failure:
+                    stream_error=type(failure).__name__
+                    raise
                 finally:
-                    self.meter(usage, SimpleNamespace(id=stream_response_id, model=stream_model))
+                    self.meter(usage, SimpleNamespace(id=stream_response_id, model=stream_model),stream_error or ("IncompleteOutput" if finish!="stop" else ""))
                     response.close()
                 if finish != "stop":
                     raise ValueError(f"Model stream did not complete: {finish}")

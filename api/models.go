@@ -101,6 +101,9 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 		fail(w, 422, "请先填写此服务的密钥；更换接口地址后需要重新填写。")
 		return
 	}
+	s.fetchModels(w, r, Channel{BaseURL: d.BaseURL, APIKey: d.APIKey})
+}
+func (s *Server) fetchModels(w http.ResponseWriter, r *http.Request, d Channel) {
 	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodGet, d.BaseURL+"/models", nil)
 	if err != nil {
 		fail(w, 422, "接口地址格式不正确。")

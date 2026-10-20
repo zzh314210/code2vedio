@@ -144,6 +144,13 @@ func newServer(store *Store, dist, workerSocket string, origins []string) (*Serv
 	}
 	m := s.Mux
 	m.HandleFunc("GET /api/billing", s.billingInfo)
+	m.HandleFunc("GET /api/usage", s.usageList)
+	m.HandleFunc("GET /api/admin/usage", s.usageList)
+	m.HandleFunc("POST /api/admin/usage/{id}/reconcile", s.reconcileUsage)
+	m.HandleFunc("GET /api/admin/platform", s.platformAdmin)
+	m.HandleFunc("PUT /api/admin/platform", s.platformAdmin)
+	m.HandleFunc("POST /api/admin/platform/models", s.platformModels)
+	m.HandleFunc("POST /api/admin/users", s.createManagedUser)
 	m.HandleFunc("POST /api/auth/register", s.register)
 	m.HandleFunc("POST /api/auth/login", s.login)
 	m.HandleFunc("GET /api/auth/me", func(w http.ResponseWriter, r *http.Request) { reply(w, 200, current(r)) })
@@ -158,6 +165,8 @@ func newServer(store *Store, dist, workerSocket string, origins []string) (*Serv
 	m.HandleFunc("POST /api/config", s.setConfig)
 	m.HandleFunc("POST /api/config/models", s.listModels)
 	m.HandleFunc("GET /api/wallet", s.wallet)
+	m.HandleFunc("GET /api/wallet/ledger", s.ledgerList)
+	m.HandleFunc("GET /api/admin/users/{id}/bills", s.ledgerList)
 	m.HandleFunc("GET /api/admin/users", s.users)
 	m.HandleFunc("PATCH /api/admin/users/{id}", s.status)
 	m.HandleFunc("POST /api/admin/users/{id}/credit", s.credit)
@@ -390,8 +399,23 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, err)
 		return
 	}
+	if !c.Saved && !c.UsePlatform && c.Text.APIKey == "" && c.Text.Model == "" && c.Text.BaseURL == "" {
+		catalog, e := s.Store.catalog()
+		if e == nil && len(catalog.Models) > 0 && s.Billing.Enabled {
+			c.UsePlatform = true
+			c.PlatformText = catalog.DefaultText
+			c.PlatformVision = catalog.DefaultVision
+		}
+	}
+	var savedCount int
+	s.Store.DB.QueryRow("SELECT count(*) FROM configs WHERE user_id=?", current(r).ID).Scan(&savedCount)
+	c.Saved = savedCount > 0
 	visible := c.public()
 	effective, e := s.effective(c)
+	if c.UsePlatform && e != nil {
+		visible.TextReady = false
+		visible.VisionReady = false
+	}
 	if e == nil && c.UsePlatform {
 		ready := effective.public()
 		visible.TextReady = ready.TextReady
@@ -415,6 +439,13 @@ func (s *Server) setConfig(w http.ResponseWriter, r *http.Request) {
 	if err = normalizeConfig(&c, old); err != nil {
 		fail(w, 422, err.Error())
 		return
+	}
+	c.PlatformPrices = nil
+	if c.UsePlatform {
+		if _, err = s.effective(c); err != nil {
+			fail(w, 422, err.Error())
+			return
+		}
 	}
 	if err = s.Store.saveConfig(current(r).ID, c); err != nil {
 		s.internal(w, err)
@@ -525,13 +556,13 @@ func (s *Server) credit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.Note = strings.TrimSpace(d.Note)
-	if d.Amount <= 0 || d.Amount > 100000000 || utf8.RuneCountInString(d.Note) < 2 || utf8.RuneCountInString(d.Note) > 200 || !requestPattern.MatchString(d.RequestID) {
+	if d.Amount == 0 || d.Amount < -100000000 || d.Amount > 100000000 || utf8.RuneCountInString(d.Note) < 2 || utf8.RuneCountInString(d.Note) > 200 || !requestPattern.MatchString(d.RequestID) {
 		fail(w, 422, "请检查充值金额、备注和操作凭证。")
 		return
 	}
 	entry, err := s.Store.credit(current(r).ID, r.PathValue("id"), d.Amount, d.Note, d.RequestID)
 	if err != nil {
-		fail(w, 409, "充值未完成：请检查用户、金额及重复操作凭证。")
+		fail(w, 409, err.Error())
 		return
 	}
 	reply(w, 200, entry)

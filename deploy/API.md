@@ -121,7 +121,7 @@ Authorization: Bearer YOUR_FRAME_KEY
 
 ## AI 剪辑：提交、确认与导出
 
-所有路径支持同一 Bearer 调用密钥。视频内容是任务输入，生产运行不依赖 Codex/Claude。镜头与语音使用本地免费组件；画面理解和选段使用用户配置的两个模型接口，记录实际模型用量。站内自动余额扣费仍关闭。
+所有路径支持同一 Bearer 调用密钥。视频内容是任务输入，生产运行不依赖 Codex/Claude。镜头与语音使用本地免费组件；画面理解和选段使用用户配置的两个模型接口，记录实际模型用量。平台模型按实际用量扣预付余额；自备 API 不扣站内余额。
 
 ```bash
 curl https://vedio.myaihub.asia/api/edits \
@@ -145,3 +145,23 @@ curl https://vedio.myaihub.asia/api/edits \
 通过 `PUT /api/edits/{id}/plan` 提交 `{ "version": 当前版本, "clips": [...], "summary": "...", "subtitles": [...] }`。`effect` 为 `none` 或 `focus`，最多16段；重复、越界、非有限时间被拒绝。版本冲突返回409。修改选段后将 `subtitles` 设为null或省略，系统按新时间线重新匹配；只改字幕时提交完整字幕数组。字幕按成片秒数排列且不重叠。
 
 确认后 `POST /api/edits/{id}/render`。带货导出前再次核对商品、报价条件和语句边界；核对未通过会保留方案供修改。完成后可下载 `/video`、`/poster`、`/subtitles`、`/timeline`、`/project`。`project` 为 OpenTimelineIO 工程，需在兼容软件中重新关联原片；字幕与轻聚焦效果已烘焙在 MP4，OTIO 只导出剪点。
+
+
+## 模型选择、预付与透明账单（2026-10-20）
+
+无个人配置的新账号默认使用平台推荐模型。`GET /api/billing` 返回可用模型目录、公开价格、可用/预占余额、首次充值条件以及估算。可传 `duration`（秒）、`text_model`、`vision_model` 获取对应选择的估算；不是价格承诺或扣费上限。
+
+`POST /api/config` 的平台选择字段是 `use_platform: true`、`platform_text_model` 和 `platform_vision_model`，值使用目录中的 ID。平台凭据不会返回给用户。自备配置仍按原格式提供；`use_platform: false` 时平台不扣余额。已保存的选择不会被默认配置覆盖。
+
+平台任务未达到 5 元首次预付或可用余额不足时返回 HTTP 402。任务创建后，模型配置与价格冻结；后续调用按实际输入/输出/缓存结算。重试和成片修改同样有独立调用记录。充值由管理员确认收款后入账。
+
+以下只读接口支持同一 Bearer 凭据，且只返回所属账号的数据：
+
+- `GET /api/billing`：余额、预占、平台模型和估算。
+- `GET /api/wallet`：账户余额与兼容版最近流水。
+- `GET /api/wallet/ledger?kind=deposit&offset=0`：充值与调账分页；`kind=all` 包含模型扣费。每页 50 笔。
+- `GET /api/usage?offset=0`：模型调用分页，每页 50 笔；支持 `model`、`role`、`mode`、`status`、`job_id`、`from`、`to`。日期为 UTC，结束日期包含当天。返回 `items`、`total`、`summary`。
+
+调用状态：`reserved` 调用中，`settled` 已结算，`rejected` 上游明确拒绝且未收费，`unmetered` 用量或结算待核对。费用字段 `cost_micro` 为百万分之一元，`charged_cents` 为实际余额扣款（分）；同一任务累计取整，因此个别小调用扣款可以为 0。
+
+管理员网页会话专用：`POST /api/admin/users` 创建普通用户；`POST /api/admin/users/{id}/credit` 接受正/负 `amount_cents`、必填备注及唯一 `request_id`；`GET/PUT /api/admin/platform` 管理模型和价格（保存时携带 `revision` 防覆盖）；`POST /api/admin/platform/models` 获取已保存模型服务的列表；`GET /api/admin/usage` 支持 `user_id` 过滤；`POST /api/admin/usage/{id}/reconcile` 按凭证核对缺失用量。上述管理接口不接受自动化 Bearer 密钥。

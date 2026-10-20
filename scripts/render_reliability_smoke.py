@@ -11,9 +11,27 @@ from unittest.mock import Mock, patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
 import execution
-from pipeline import VideoPipeline
+from pipeline import VideoPipeline, task_fingerprint, resume_vision_changed
 from media import probe
 
+
+def check_resource_resume():
+    from copy import deepcopy
+    config={'text':{'model':'fixed'},'vision':{'model':'review'},'execution':{'backend':'docker','image':'fixed-image','memory':'1g','cpus':1}}
+    materials={'sources':[],'context':'same input'}
+    existing={'config':deepcopy(config),'fingerprint':task_fingerprint('topic',config,materials)}
+    updated=deepcopy(config);updated['execution']['memory']='2g'
+    assert resume_vision_changed('topic',updated,materials,existing) is False
+    updated['vision']['model']='new-review'
+    assert resume_vision_changed('topic',updated,materials,existing) is True
+    for path,value in [(('text','model'),'changed'),(('execution','backend'),'trusted'),(('execution','image'),'another-image')]:
+        candidate=deepcopy(config);candidate[path[0]][path[1]]=value
+        try:resume_vision_changed('topic',candidate,materials,existing)
+        except ValueError:pass
+        else:raise AssertionError('unsafe cache reuse after '+str(path))
+    print('PASS: resource-limit changes preserve paid caches; model, renderer and image changes cannot bypass cache validation')
+
+check_resource_resume()
 
 def check_failure_attribution():
     for code, detail, infrastructure in [(137, 'killed', True), (125, 'container unavailable', True),
@@ -40,6 +58,26 @@ def check_failure_attribution():
             raise AssertionError('Infrastructure error lost')
         pipe.render.assert_called_once()
         pipe.text.json.assert_not_called()
+    with tempfile.TemporaryDirectory() as temporary:
+        pipe=VideoPipeline.__new__(VideoPipeline);pipe.output=Path(temporary)
+        pipe.config={'video':{'fix_attempts':2}};pipe.templates={};pipe.prompt=lambda stage,prompt:prompt
+        pipe.validate_snippets=Mock();pipe.text=Mock()
+        original={'beats':[{'code':'bad'}]};fixed={'beats':[{'code':'fixed'}]};section={'id':'s','beats':[{'narration':'a','duration':1}]}
+        pipe.text.json.return_value=fixed
+        pipe.render=Mock(side_effect=[RuntimeError('bad animation'),execution.RenderInfrastructureError('memory limit')])
+        with patch('pipeline.code_prompt',return_value='repair'):
+            try:pipe.render_with_repairs(section,original,0)
+            except execution.RenderInfrastructureError:pass
+            else:raise AssertionError('expected bounded resource failure')
+        pipe.text.json.assert_called_once()
+        pipe.text.json.reset_mock();pipe.render=Mock(return_value=Path(temporary)/'lesson.mp4')
+        _,result,revision=pipe.render_with_repairs(section,original,0)
+        assert result==fixed and revision==1
+        pipe.text.json.assert_not_called()
+        changed={'id':'s','beats':[{'narration':'different','duration':1}]}
+        _,result,revision=pipe.render_with_repairs(changed,original,0)
+        assert result==original and revision==0
+    print('PASS: paid repair code survives infrastructure retries; changed storyboard cannot reuse it')
     print('PASS: infrastructure failures retain exit information and never trigger paid model repairs')
 
 

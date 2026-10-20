@@ -24,20 +24,25 @@ type Channel struct {
 	Voice         string          `json:"voice,omitempty"`
 }
 type PersonalConfig struct {
-	UsePlatform   bool    `json:"use_platform"`
-	Text          Channel `json:"text"`
-	Vision        Channel `json:"vision"`
-	TTS           Channel `json:"tts"`
-	VisionInherit bool    `json:"vision_inherit"`
-	TextReady     bool    `json:"text_ready"`
-	VisionReady   bool    `json:"vision_ready"`
-	SpeechReady   bool    `json:"speech_ready"`
+	Saved          bool    `json:"saved"`
+	PlatformText   string  `json:"platform_text_model,omitempty"`
+	PlatformVision string  `json:"platform_vision_model,omitempty"`
+	PlatformPrices []Rate  `json:"platform_prices,omitempty"`
+	UsePlatform    bool    `json:"use_platform"`
+	Text           Channel `json:"text"`
+	Vision         Channel `json:"vision"`
+	TTS            Channel `json:"tts"`
+	VisionInherit  bool    `json:"vision_inherit"`
+	TextReady      bool    `json:"text_ready"`
+	VisionReady    bool    `json:"vision_ready"`
+	SpeechReady    bool    `json:"speech_ready"`
 }
 
 func defaultConfig() PersonalConfig {
 	return PersonalConfig{Text: Channel{MaxTokens: 24000, Protocol: "chat_completions", Fallbacks: []string{}}, Vision: Channel{MaxTokens: 6000, Protocol: "chat_completions", Fallbacks: []string{}}, VisionInherit: false, TTS: Channel{Provider: "edge", Voice: "zh-CN-XiaoxiaoNeural", Fallbacks: []string{}}}
 }
 func (c PersonalConfig) public() PersonalConfig {
+	c.PlatformPrices = nil
 	ready := func(ch Channel) bool { return ch.BaseURL != "" && ch.Model != "" && ch.APIKey != "" }
 	c.TextReady = ready(c.Text)
 	c.VisionReady = ready(c.Vision)
