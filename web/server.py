@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -230,7 +230,8 @@ def get_job(identity:str):
 async def create_job(prompt:Annotated[str,Form()],style:Annotated[str,Form()],duration:Annotated[int,Form()]=30,orientation:Annotated[str,Form()]='landscape',files:Annotated[list[UploadFile]|None,File()]=None,auto_approve:Annotated[bool,Form()]=False,reference_urls:Annotated[str,Form()]='',source_ids:Annotated[str,Form()]='',template_id:Annotated[str,Form()]='',bgm_enabled:Annotated[bool,Form()]=False,bgm_track_id:Annotated[str,Form()]='',bgm_upload_id:Annotated[str,Form()]='',bgm_volume:Annotated[float,Form()]=.16):
     if not 5<=len(prompt.strip())<=6000:raise HTTPException(400,'请填写5至6000字的视频需求。')
     if style not in STYLE_IDS:raise HTTPException(400,'请选择可用主题。')
-    if not 15<=duration<=(300 if template_id=='notes' else 120) or orientation not in ('landscape','portrait'):raise HTTPException(400,'视频参数无效。')
+    if not 15<=duration<=180:raise HTTPException(400,'视频时长请填写15至180秒，最长3分钟。')
+    if orientation not in ('landscape','portrait'):raise HTTPException(400,'请选择横屏或竖屏。')
     if production_queue:production_queue.ensure_capacity(current_user.get()['id'])
     personal=user_settings()
     if not visible_config(current_config.get())['speech_ready']:raise HTTPException(400,'请完善配音服务配置。')
@@ -588,8 +589,14 @@ def search_sources(request:SourceSearch):
     try:
         service=TeachingSources({**user_settings().get('teaching_research',{}),'timeout':10})
         result=service.search_readable(request.query,request.platform,request.limit)
-        return {'results':[{k:v for k,v in item.items() if k in ('id','url','title','kind','text')} for item in result['results']], 'unreadable_count':result.get('unreadable_count',0)}
+        # Send small cards; full text is fetched only when previewing a reference.
+        return {'results':[{**{k:v for k,v in item.items() if k in ('id','url','title','kind')},'text':item['text'][:360],'characters':len(item['text'])} for item in result['results']], 'unreadable_count':result.get('unreadable_count',0), 'cached':result.get('cached',False), 'notice':result.get('notice','')}
     except Exception as e:raise HTTPException(502,'百科服务暂时无法连接，请稍后再试；也可使用我的素材库或上传文稿。')
+
+
+@app.get('/api/sources/search')
+def search_sources_read(query:Annotated[str,Query(min_length=2,max_length=200)],platform:Literal['web','wikipedia','library']='wikipedia',limit:Annotated[int,Query(ge=1,le=12)]=6):
+    return search_sources(SourceSearch(query=query,platform=platform,limit=limit))
 
 
 @app.post('/api/sources/ingest')

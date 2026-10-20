@@ -1,3 +1,4 @@
+import ChoiceSelect from './ChoiceSelect';
 import {useEffect, useRef, useState} from 'react';
 import {KeyRound, LoaderCircle, RefreshCw, Search} from 'lucide-react';
 import {Button} from '@/components/ui/button';
@@ -51,13 +52,13 @@ export default function ModelChannel({role,title,description,item,onChange}:{
     {error&&<p className="editor-error" role="alert">{error}</p>}
     {models!==null&&<div className="model-list-panel">
      <p role="status">{models.length?`已获取 ${models.length} 个模型，请选择适合此用途的模型。`:'此服务暂未返回可用模型，可以手动填写模型名称。'}</p>
-     {models.length>0&&<><label className="model-search"><Search size={16}/><Input name={role+'-model-search'} aria-label={'搜索'+title+'模型'} type="search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="搜索模型名称"/></label><label>可用模型<select aria-label={title+'可用模型'} value="" onChange={e=>{if(e.target.value){onChange({model:e.target.value});setQuery('')}}}><option value="">{filtered.length?'请选择一个模型':'没有匹配的模型'}</option>{filtered.map(model=><option key={model} value={model}>{model}</option>)}</select></label></>}
+     {models.length>0&&<><label className="model-search"><Search size={16}/><Input name={role+'-model-search'} aria-label={'搜索'+title+'模型'} type="search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="搜索模型名称"/></label><label>可用模型<ChoiceSelect aria-label={title+'可用模型'} value="" onChange={next=>{if(next){onChange({model:next});setQuery('')}}}><option value="">{filtered.length?'请选择一个模型':'没有匹配的模型'}</option>{filtered.map(model=><option key={model} value={model}>{model}</option>)}</ChoiceSelect></label></>}
     </div>}
    </div>
    <label className="wide">模型名称<Input name={role+'-model'} autoComplete="off" value={item.model} onChange={e=>onChange({model:e.target.value})} placeholder="选择上方模型，或手动输入模型名称"/><small>{role==='vision'?'请选择支持图片输入的模型；列表中的名称保留服务商原名。':'使用服务商提供的模型名称，保存后用于此项服务。'}</small></label>
    {role==='tts'&&<label className="wide">音色名称<Input name="tts-voice" value={item.voice||''} onChange={e=>onChange({voice:e.target.value})} placeholder="填写服务商支持的音色名称"/></label>}
   </div>
-  {role!=='tts'&&<details className="model-advanced"><summary>高级设置 <span>一般保持默认即可</span></summary><div className="settings-grid"><label>接口类型<select value={item.protocol} onChange={e=>onChange({protocol:e.target.value})}><option value="chat_completions">对话接口（常见）</option><option value="responses">响应接口</option></select></label><label>最大输出长度<Input type="number" name={role+'-max-tokens'} min={256} max={100000} value={item.max_tokens||12000} onChange={e=>onChange({max_tokens:Number(e.target.value)})}/><small>控制单次生成的内容上限，一般保持默认即可。</small></label><label className="wide">备用模型 <span className="optional">可选</span><Input name={role+'-fallbacks'} autoComplete="off" value={(item.fallback_models||[]).join(',')} onChange={e=>onChange({fallback_models:e.target.value?e.target.value.split(','):[]})} placeholder="多个模型名称用英文逗号分隔"/><small>主模型不可用时按顺序尝试，使用同一服务地址和密钥。</small></label></div></details>}
+  {role!=='tts'&&<details className="model-advanced"><summary>高级设置 <span>一般保持默认即可</span></summary><div className="settings-grid"><label>接口类型<ChoiceSelect aria-label="接口类型" value={item.protocol} onChange={next=>onChange({protocol:next})}><option value="chat_completions">对话接口（常见）</option><option value="responses">响应接口</option></ChoiceSelect></label><label>最大输出长度<Input type="number" name={role+'-max-tokens'} min={256} max={100000} value={item.max_tokens||12000} onChange={e=>onChange({max_tokens:Number(e.target.value)})}/><small>控制单次生成的内容上限，一般保持默认即可。</small></label><label className="wide">备用模型 <span className="optional">可选</span><Input name={role+'-fallbacks'} autoComplete="off" value={(item.fallback_models||[]).join(',')} onChange={e=>onChange({fallback_models:e.target.value?e.target.value.split(','):[]})} placeholder="多个模型名称用英文逗号分隔"/><small>主模型不可用时按顺序尝试，使用同一服务地址和密钥。</small></label></div></details>}
   {item.key_configured&&<label className="checkbox-label model-remove"><input type="checkbox" checked={Boolean(item.clear_key)} onChange={e=>onChange({clear_key:e.target.checked,api_key:''})}/>保存时移除此密钥</label>}
  </fieldset>;
 }

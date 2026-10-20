@@ -9,7 +9,7 @@ from configuration import sanitize_error
 from video_project import write_json
 from storage_lifecycle import user_directory,records as storage_records
 from user_config import validate_public_endpoint
-from editing import MODES,inspect_media,validate_clips,analyze,render,review_commerce,selected_subtitles
+from editing import MODES,inspect_media,validate_clips,analyze,render,review_edit,selected_subtitles
 from model_gateway import ModelGateway
 
 class EditPlan(BaseModel):
@@ -64,11 +64,10 @@ class EditingService:
     sources,plan=analyze(directory,copy.deepcopy(job),config,event)
     self.update(identity,sources=sources,plan=plan,version=job.get('version',0)+1,status='awaiting_review',stage='review',message='方案已准备好，预览原片并确认选段后导出。')
    else:
-    validate_clips(job['plan'],job['sources'],mode=job['mode'],speech_safe=job['mode']=='product')
-    if job['mode']=='product':
-     event('review','导出前复核商品、报价条件与语句完整性')
-     review=review_commerce(directory,job['sources'],job['plan'],ModelGateway(config['text']))
-     if not review['passed']:raise ValueError('当前选段未通过带货内容核对：'+'；'.join(review['issues'])[:240]+'。请调整方案后再导出。')
+    validate_clips(job['plan'],job['sources'],mode=job['mode'],speech_safe=True)
+    event('review','导出前核对最终选段、字幕与上下文')
+    review=review_edit(directory,job['sources'],job['plan'],ModelGateway(config['text']),job['mode'])
+    if not review['passed']:raise ValueError('当前选段未通过内容核对：'+'；'.join(review['issues'])[:240]+'。请调整方案后再导出。')
     actual=render(directory,copy.deepcopy(job),job['plan'],event)
     self.update(identity,status='complete',stage='complete',message='剪辑完成，可以预览和下载。',duration=actual['duration'],video=f'/api/edits/{identity}/video',poster=f'/api/edits/{identity}/poster')
   except Exception as error:
@@ -94,7 +93,7 @@ class EditingService:
   @r.post('/api/edits',status_code=202)
   async def create(prompt:Annotated[str,Form()],files:Annotated[list[UploadFile],File()],mode:Annotated[Literal['highlights','product','gaming','documentary'],Form()]='highlights',target_duration:Annotated[int,Form()]=30,orientation:Annotated[Literal['landscape','portrait'],Form()]='landscape',captions:Annotated[bool,Form()]=True):
    if not 5<=len(prompt.strip())<=3000:raise HTTPException(400,'请填写5至3000字的剪辑要求。')
-   if not (30 if mode=='product' else 5)<=target_duration<=120:raise HTTPException(400,'普通剪辑目标为5至120秒；直播带货切片为30至120秒。')
+   if not (30 if mode=='product' else 5)<=target_duration<=(120 if mode=='product' else 180):raise HTTPException(400,'普通剪辑目标为5至180秒；直播带货切片为30至120秒。')
    if not 1<=len(files)<=3:raise HTTPException(400,'每次可上传1至3个视频。')
    config=self.ready();identity=self.job_id() or uuid.uuid4().hex[:12];directory=user_directory(self.root,'edit',identity,self.user()['id'])
    with self.lock:
@@ -129,7 +128,7 @@ class EditingService:
     job=self.get(identity)
     if job['status'] not in ['awaiting_review','complete','failed']:raise HTTPException(409,'分析或导出中，请稍后修改方案。')
     if value.version!=job['version']:raise HTTPException(409,'方案已更新，请刷新后重试。')
-    try:plan=validate_clips(value.model_dump(),job['sources'],mode=job['mode'],speech_safe=job['mode']=='product')
+    try:plan=validate_clips(value.model_dump(),job['sources'],mode=job['mode'],speech_safe=True)
     except ValueError as error:raise HTTPException(422,str(error))
     if value.subtitles is None:plan['subtitles']=selected_subtitles(plan,job['sources'])
     self.update(identity,plan=plan,version=job['version']+1,status='awaiting_review',stage='review',video=None,poster=None)

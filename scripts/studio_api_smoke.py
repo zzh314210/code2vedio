@@ -40,6 +40,22 @@ with tempfile.TemporaryDirectory() as tmp:
         assert client.get('/api/sources/'+source['id']).status_code==200
         assert other.get('/api/sources/'+source['id']).status_code==404
         assert other.get('/api/sources').json()['results']==[]
+        for method in ('get','post'):
+            kwargs={'params':{'query':'私有','platform':'library'}} if method=='get' else {'json':{'query':'私有','platform':'library'}}
+            search=getattr(client,method)('/api/sources/search',**kwargs)
+            assert search.status_code==200,search.text
+            assert search.json()['results'][0]['id']==source['id']
+            assert len(search.json()['results'][0]['text'])<=360
+            assert getattr(other,method)('/api/sources/search',**kwargs).json()['results']==[]
+        assert client.get('/api/sources/search',params={'query':'x'}).status_code==422
+        assert client.get('/api/sources/search',params={'query':'复利','platform':'bilibili'}).status_code==422
+        for duration in [75,179,180]:
+            with patch.object(server,'jobs',{}):
+                response=client.post('/api/jobs',data={'prompt':'演示自由设置视频时长','duration':str(duration),'style':'studio_editorial'})
+            assert response.status_code==202,response.text
+        for duration in [14,181,300]:
+            response=client.post('/api/jobs',data={'prompt':'演示视频时长限制','duration':str(duration),'style':'studio_editorial'})
+            assert response.status_code==400,response.text
         server.jobs={};server.discover()
         assert client.get('/api/jobs/'+identity).status_code==200
         assert other.get('/api/jobs/'+identity).status_code==404

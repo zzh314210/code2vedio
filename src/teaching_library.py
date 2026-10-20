@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -81,6 +82,7 @@ class TeachingLibrary:
             db.execute("CREATE TABLE IF NOT EXISTS sources (id TEXT PRIMARY KEY, url TEXT UNIQUE NOT NULL, sha256 TEXT NOT NULL, title TEXT NOT NULL, text TEXT NOT NULL, payload TEXT NOT NULL, updated_at TEXT NOT NULL)")
             db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS lessons_fts USING fts5(id UNINDEXED,title,text,tokenize='trigram')")
             db.execute("CREATE TABLE IF NOT EXISTS failures (url TEXT PRIMARY KEY,error TEXT NOT NULL,updated_at TEXT NOT NULL)")
+            db.execute("CREATE TABLE IF NOT EXISTS search_cache (query TEXT PRIMARY KEY,ids TEXT NOT NULL,updated_at REAL NOT NULL)")
 
     @contextmanager
     def connect(self):
@@ -132,6 +134,20 @@ class TeachingLibrary:
         with self.connect() as db:
             return {"sources": db.execute("SELECT count(*) FROM sources").fetchone()[0], "failures": db.execute("SELECT count(*) FROM failures").fetchone()[0]}
 
+    def cached_search(self, query, max_age=86400):
+        with self.connect() as db:
+            row = db.execute('SELECT ids,updated_at FROM search_cache WHERE query=?', (query,)).fetchone()
+        if not row or time.time() - row['updated_at'] > max_age:
+            return None
+        return [source for identity in json.loads(row['ids']) if (source := self.get(identity))]
+
+    def remember_search(self, query, sources):
+        if not sources:
+            return
+        with self.connect() as db:
+            db.execute('INSERT OR REPLACE INTO search_cache VALUES (?,?,?)', (query, json.dumps([s['id'] for s in sources]), time.time()))
+            db.execute('DELETE FROM search_cache WHERE updated_at<?', (time.time() - 7 * 86400,))
+
 
 class TeachingSources:
     def __init__(self, settings=None):
@@ -143,40 +159,50 @@ class TeachingSources:
             return {"query": query, "backend": "sqlite-fts5", "results": self.library.search(query, limit)}
         if platform not in ("web", "wikipedia"):
             raise ValueError("此搜索来源已停用，请使用百科搜索或我的素材库。")
-        # Keep the old `web` value as an alias for API clients. No unreliable fallback.
-        from urllib.parse import urlencode, quote
-        _, raw = get_page("https://zh.wikipedia.org/w/api.php?" + urlencode({
-            "action": "query", "list": "search", "srsearch": " ".join('"' + term + '"' for term in re.findall(r"[\w]+", query)),
-            "srlimit": min(limit, 12), "format": "json",
-        }), min(self.settings.get("timeout", 10), 10))
-        value = json.loads(raw)
-        if "error" in value:
-            raise RuntimeError("百科搜索暂时不可用，请稍后再试。")
-        results = [{"title": item["title"], "url": "https://zh.wikipedia.org/wiki/" + quote(item["title"]), "kind": "article"}
-                   for item in value.get("query", {}).get("search", [])]
+        from encyclopedia_search import search
+        results = search(query, limit)
         return {"query": query, "backend": "wikipedia", "results": results}
 
     def search_readable(self, query, platform="wikipedia", limit=6):
         """Only return actual stored bodies, never a snippet presented as a reference."""
         from concurrent.futures import ThreadPoolExecutor
-        result = self.search(query, platform, limit)
+        from encyclopedia_search import article
+        query = ' '.join(query.strip().split())
+        cache_key = f'{platform}:{limit}:{query}'
+        if platform in ('web', 'wikipedia'):
+            cached = self.library.cached_search(cache_key)
+            if cached:
+                return {'query': query, 'backend': 'wikipedia', 'results': cached, 'cached': True}
+        try:
+            result = self.search(query, platform, limit)
+        except Exception:
+            cached = self.library.cached_search(cache_key, 7 * 86400) or self.library.search(query, limit)
+            if not cached:
+                raise
+            return {'query': query, 'backend': 'library-fallback', 'results': cached, 'cached': True, 'notice': '外部百科暂时不可用，已展示你素材库中的相关正文。'}
         if platform == "library":
             return result
         def read(item):
             try:
-                return self.library.get(item["url"]) or self.ingest(item["url"])
+                return self.library.get(item["url"]) or (self.library.put(article(item)) if item.get('pageid') else self.ingest(item["url"]))
             except Exception:
                 return None
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=6) as pool:
             readable = [item for item in pool.map(read, result["results"]) if item]
+        if result['results'] and not readable:
+            cached = self.library.search(query, limit)
+            if not cached:
+                raise RuntimeError('百科正文暂时无法读取，请稍后重试。')
+            return {**result, 'results': cached, 'cached': True, 'notice': '本次正文未能读取，已展示素材库中的相关内容。'}
+        self.library.remember_search(cache_key, readable)
         return {**result, "results": readable, "unreadable_count": len(result["results"]) - len(readable)}
 
     def read_article(self, url):
         # Agent Reach's ready-made Jina reader is especially useful for rich Zhihu pages.
-        from agent_reach.channels.web import WebChannel
         errors = []
         if "zhihu.com" in (urlsplit(url).hostname or ""):
             try:
+                from agent_reach.channels.web import WebChannel
                 text = WebChannel().read(url)
                 if "Markdown Content:" not in text or len(text.split("Markdown Content:", 1)[1].strip()) < 400:
                     raise ValueError("Reader returned no substantive article")

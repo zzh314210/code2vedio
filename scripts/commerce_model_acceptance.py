@@ -15,7 +15,7 @@ sources=[{'id':'s1','name':'原创报价条件验收用例，非真实商品广�
  {'start':32,'end':40,'text':'喜欢A款的朋友，请确认自己符合刚才说的条件，再领券下单。'},
  {'start':40,'end':46,'text':'下面换一个商品，B款三百毫升陶瓷马克杯，没有保温功能。'},
  {'start':46,'end':54,'text':'这款价格四十九元，所有用户都可以买，不需要领券。'}]}]
-cases=[('complete',[(0,40)],True),('missing_coupon_conditions',[(0,22),(32,40)],False),('cross_product_price',[(0,16),(46,54)],False)]
+cases=[('complete',[(0,40)],True),('demonstration_without_offer',[(0,16)],True),('missing_coupon_conditions',[(0,22),(32,40)],False),('cross_product_price',[(0,16),(46,54)],False)]
 results=[]
 for name,ranges,expected in cases:
  d=out/name;d.mkdir(exist_ok=True)

@@ -12,7 +12,7 @@ function delay(ms:number,signal?:AbortSignal|null){
  });
 }
 
-export async function request<T>(url:string,options?:RequestInit):Promise<T>{
+export async function request<T>(url:string,options?:RequestInit & {timeoutMs?:number}):Promise<T>{
  const method=(options?.method||'GET').toUpperCase();
  const readOnly=method==='GET'||method==='HEAD';
  const headers=new Headers(options?.headers);
@@ -22,11 +22,12 @@ export async function request<T>(url:string,options?:RequestInit):Promise<T>{
   const cancelled=()=>controller.abort();
   if(options?.signal?.aborted)throw new DOMException('Request cancelled','AbortError');
   options?.signal?.addEventListener('abort',cancelled,{once:true});
-  const timer=readOnly?setTimeout(()=>controller.abort(),15000):undefined;
+  const timer=readOnly?setTimeout(()=>controller.abort(),options?.timeoutMs||15000):undefined;
   try{
    let response:Response,value;
    try{
-    response=await fetch(url,{...options,headers,signal:controller.signal,credentials:'same-origin'});
+    const {timeoutMs:_,...fetchOptions}=options||{};
+    response=await fetch(url,{...fetchOptions,headers,signal:controller.signal,credentials:'same-origin'});
     try{value=response.status===204?undefined:await response.json()}catch(error){
      if(response.ok)throw error;
      value=null;

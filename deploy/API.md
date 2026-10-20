@@ -13,7 +13,7 @@ curl https://vedio.myaihub.asia/api/jobs \
 
 返回 HTTP 202 和 `{"id":"..."}`。每3至5秒请求 `GET /api/jobs/{id}`，状态为 `complete` 后读取 `video` 路径并携带同一密钥下载。`failed` 包含错误说明；已发生的模型消耗不会因生成失败而取消。`auto_approve=false` 时会在大纲和分镜阶段暂停，等待确认。
 
-`duration` 为15至120秒的目标时长；`orientation` 为 `landscape` 或 `portrait`。主题通过 `GET /api/styles` 获取，目前支持 `studio_noir`、`studio_editorial`、`studio_sketch`。
+`duration` 为15至180秒的目标时长；`orientation` 为 `landscape` 或 `portrait`。主题通过 `GET /api/styles` 获取，目前支持 `studio_noir`、`studio_editorial`、`studio_sketch`。
 
 ## 模型和配音配置
 
@@ -64,7 +64,7 @@ curl https://vedio.myaihub.asia/api/jobs \
 
 最多10份文件，每份50 MB。multipart 使用已保存的个人配置；JSON 的 `config` 支持单任务覆盖。`reference_urls` 在 JSON 中为字符串数组，在 multipart 中为每行一个链接。`source_ids` 在 multipart 中为 JSON 数组字符串。
 
-- `POST /api/sources/search`：`{"query":"复利","platform":"wikipedia","limit":6}`；来源为 `wikipedia`（百科正文）和 `library`（我的素材库）。旧 `web` 值兼容映射到百科；不可靠的 Bing、B站、知乎搜索已停用。搜索返回已读取、已归档的正文及 ID，可直接作为 source_ids 选用；unreadable_count 表示被过滤的页面数量。
+- `GET /api/sources/search?query=复利&platform=wikipedia&limit=6`：可安全重试；也兼容 `POST` JSON `{"query":"复利","platform":"wikipedia","limit":6}`。来源为 `wikipedia`（百科正文）和 `library`（我的素材库）。旧 `web` 值兼容映射到百科；不可靠的 Bing、B站、知乎搜索已停用。结果均已读取并归档，返回 ID、360 字以内摘要与 characters 正文长度，可直接作为 source_ids 选用；完整正文从 `GET /api/sources/:id` 获取。unreadable_count 表示过滤的页面数；cached 与 notice 说明缓存或外部故障回退。
 - `POST /api/sources/ingest`：`{"urls":["https://公开来源"]}`；正文读取成功才返回素材 ID。
 - `GET /api/sources`、`GET /api/sources/{id}`：仅当前用户的素材。
 
@@ -141,7 +141,7 @@ Authorization: Bearer YOUR_FRAME_KEY
 
 任务支持 `template_id`：`explainer`（知识讲解）、`documentary`（微纪录片）、`product`（产品种草）、`history_map`（历史地图故事）、`math_visual`（数学看得见）、`word_story`（单词奇遇记）、`notes`（笔记放映室）。模板规定叙事与视觉约束，画风仍使用 `style` 单独选择。
 
-`notes` 允许最长300秒，必须用 multipart 上传至少40字、可提取正文的笔记（TXT、Markdown、文字 PDF）。扫描 PDF 需要先转文字。超出本课容量会明确要求拆分；不会静默丢弃剩余笔记。建议 `auto_approve=false`，先审阅知识框架再制作。
+`notes` 与其他创作模板一样最长180秒，必须用 multipart 上传至少40字、可提取正文的笔记（TXT、Markdown、文字 PDF）。扫描 PDF 需要先转文字。超出本课容量会明确要求拆分；不会静默丢弃剩余笔记。建议 `auto_approve=false`，先审阅知识框架再制作。
 
 ## AI 剪辑：提交、确认与导出
 
@@ -159,7 +159,7 @@ curl https://vedio.myaihub.asia/api/edits \
 返回202及 `id`。每5秒轮询 `GET /api/edits/{id}`；`GET /api/edits` 返回自己的剪辑历史。状态依次为 `queued` → `analyzing` → `awaiting_review` → `queued` → `rendering` → `complete`；`failed` 或 `cancelled` 可用 `POST /api/edits/{id}/retry` 重试。
 
 - 模式：`highlights`（精华）、`product`（直播带货）、`gaming`（游戏高光）、`documentary`（叙事纪实）。
-- 目标：普通剪辑5至120秒；带货30至120秒，成片也强制30至120秒。
+- 目标：普通剪辑5至180秒；带货30至120秒，成片也强制30至120秒。秒数可自由填写。
 - 素材：每次1至3份 MP4/MOV/WebM/MKV，单份150 MB、合计400 MB。带货单份最长15分钟、合计30分钟；其余单份5分钟、合计10分钟。上传完成前不要关闭请求。
 - 原画面完整保留，比例不同时留边；原声保留，不添加未经授权的音乐。字幕来自本地识别，发布前应校对。
 - `GET /api/edits/{id}/source/{source_id}` 可预览原片，支持 Range 请求。

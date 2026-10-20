@@ -583,7 +583,7 @@ func (s *Server) worker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := current(r)
-	if (r.Method != "GET" && (strings.HasPrefix(r.URL.Path, "/api/music/") || strings.HasPrefix(r.URL.Path, "/api/sources") || strings.HasPrefix(r.URL.Path, "/api/edits") || strings.HasPrefix(r.URL.Path, "/api/jobs/"))) || strings.HasPrefix(r.URL.Path, "/api/voices/") {
+	if r.URL.Path == "/api/sources/search" || (r.Method != "GET" && (strings.HasPrefix(r.URL.Path, "/api/music/") || strings.HasPrefix(r.URL.Path, "/api/sources") || strings.HasPrefix(r.URL.Path, "/api/edits") || strings.HasPrefix(r.URL.Path, "/api/jobs/"))) || strings.HasPrefix(r.URL.Path, "/api/voices/") {
 		if err := s.Store.limit("sources:"+u.ID, 30, 60); err != nil {
 			fail(w, 429, err.Error())
 			return
