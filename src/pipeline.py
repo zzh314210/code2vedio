@@ -64,9 +64,11 @@ def validate_video_constraints(video):
         raise ValueError("video.subtitle_language 必须是三字母字幕语言代码")
 
 
-def validate_snippet(code, extensions=None):
+def validate_snippet(code, extensions=None, runtime=None):
     nonempty(code, "Manim code", 24000)
     tree = ast.parse(code)
+    from scene_api import validate_calls
+    validate_calls(tree, runtime)
     prohibited = (ast.Import, ast.ImportFrom, ast.While, ast.With, ast.AsyncWith, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Return, ast.Raise, ast.Try, ast.Global, ast.Nonlocal)
     denied_names = {"open", "exec", "eval", "compile", "getattr", "setattr", "delattr", "globals", "locals", "vars", "input", "breakpoint", "__import__", "Tex", "MathTex", "SVGMobject", "ImageMobject"}
     allowed_methods = {"play", "wait", "add", "remove", "scene_text", "scene_paragraph", "sketch_line", "asset", "extension", "style_color", "sketch_shape", "ink_path"}
@@ -106,12 +108,12 @@ def validate_snippet(code, extensions=None):
                 raise ValueError("不能修改对象属性，请使用 Manim 方法")
 
 
-def validate_code(value, count, extensions=None, video=None):
+def validate_code(value, count, extensions=None, video=None, runtime=None):
     if not isinstance(value, dict) or not isinstance(value.get("beats"), list) or len(value["beats"]) != count:
         raise ValueError(f"代码必须包含 {count} 个 beats")
     for index, beat in enumerate(value["beats"], 1):
         try:
-            validate_snippet(beat["code"], extensions)
+            validate_snippet(beat["code"], extensions, runtime)
             validate_style_snippet(beat["code"], video)
         except (ValueError, SyntaxError) as error:
             raise ValueError(f"第{index}个分镜：{error}") from error
@@ -402,6 +404,8 @@ class VideoPipeline:
             original += '\n回忆题请将提问与答案拆成两个beats；提问beat设置hold_after_seconds=2，旁白说完后会真正停顿两秒，再进入答案镜头。hold_after_seconds允许0至10秒，计入总时长。'
             original += f"\n本项目每个 beat 的字符上限：narration ≤{video.get('narration_max_chars', 140)}，caption ≤{video.get('caption_max_chars', 42)}。"
         if stage == "code":
+            from scene_api import reference
+            original += "\n" + reference(self.project / "code/runtime")
             descriptions = {name: entry.get("description", "") for name, entry in self.extensions.items()}
             original += "\n本项目允许的动画扩展（空对象表示无扩展；调用 self.extension(名称字面量, ...)，首个参数自动传入 scene）：" + json.dumps(descriptions, ensure_ascii=False)
         if stage == 'review':
@@ -613,7 +617,8 @@ class VideoPipeline:
         return video
 
     def validate_snippets(self, value, count):
-        validate_code(value, count, self.extensions, self.config['video'])
+        runtime = self.project / "code/runtime" if getattr(self, 'project', None) else None
+        validate_code(value, count, self.extensions, self.config['video'], runtime)
         owned={'history_map':{'map_story'},'word_story':{'story_scene','vocabulary_card'},'product':{'media_shot'},'documentary':{'media_shot'},'notes':{'knowledge_map','function_plot'},'math_visual':{'function_plot'}}.get(self.config.get('task',{}).get('template_id'),set())
         if self.config.get('task',{}).get('template_id'):owned=owned|{'review_cards','recall_card','function_plot','formula_steps','lunar_phases'}
         if not owned:return
@@ -652,7 +657,11 @@ class VideoPipeline:
                 raise
             except RuntimeError as failure:
                 if attempt == self.config["video"]["fix_attempts"]:
-                    raise RuntimeError(f"{section['id']} 渲染修复耗尽，完整日志已保存") from failure
+                    detail = str(failure).strip()
+                    errors = re.findall(r"(?m)^([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception): .+)$", detail)
+                    reason = (errors[-1] if errors else detail.splitlines()[-1] if detail else "渲染器未返回错误详情")[:300]
+                    title = section.get('title', section['id'])[:60]
+                    raise RuntimeError(f"“{title}”动画制作失败，已自动修复 {attempt} 次。具体原因：{reason}") from failure
                 print(f"修复 {section['id']}，第 {attempt + 1} 次")
                 snippets = self.text.json(self.prompt("code", code_prompt(section, snippets, str(failure)[-8000:], self.templates, self.config["video"])), lambda value: self.validate_snippets(value, len(section["beats"])))
 
