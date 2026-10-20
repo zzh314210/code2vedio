@@ -79,7 +79,7 @@ curl https://vedio.myaihub.asia/api/jobs \
 - `POST /api/jobs/{id}/planning/{stage}/approve`：`{"version":"当前版本"}`，确认并继续。
 - `PATCH /api/jobs/{id}/planning-mode`：`{"auto_approve":true}`，自动确认后续规划。
 - `POST /api/jobs/{id}/retry`：重试失败任务。
-- `GET /api/jobs/{id}/usage`：逐次调用用量，缺少上游 usage 的调用明确标记未计量。
+- `GET /api/jobs/{id}/usage`：平台模型的逐次调用用量，缺少上游 usage 的调用明确标记未计量；自备 API 返回空记录，不参与本站计量。
 
 HTTP 401：凭据无效；403：权限不足；404：资源不存在或不属于当前用户；409：任务忙或文档版本冲突；429：请求频率限制。服务器当前串行渲染，避免同时抢占资源；409 时应稍后重试。
 
@@ -151,7 +151,7 @@ curl https://vedio.myaihub.asia/api/edits \
 
 无个人配置的新账号默认使用平台推荐模型。`GET /api/billing` 返回可用模型目录、公开价格、可用/预占余额、首次充值条件以及估算。可传 `duration`（秒）、`text_model`、`vision_model` 获取对应选择的估算；不是价格承诺或扣费上限。
 
-`POST /api/config` 的平台选择字段是 `use_platform: true`、`platform_text_model` 和 `platform_vision_model`，值使用目录中的 ID。平台凭据不会返回给用户。自备配置仍按原格式提供；`use_platform: false` 时平台不扣余额。已保存的选择不会被默认配置覆盖。
+`POST /api/config` 的平台选择字段是 `use_platform: true`、`platform_text_model` 和 `platform_vision_model`，值使用目录中的 ID。平台凭据不会返回给用户。自备配置仍按原格式提供；`use_platform: false` 时无需站内预付，不扣余额、不预占、不产生本站调用流水；即使平台计费服务暂停也不影响调用自备 API。已保存的选择不会被默认配置覆盖。
 
 平台任务未达到 5 元首次预付或可用余额不足时返回 HTTP 402。任务创建后，模型配置与价格冻结；后续调用按实际输入/输出/缓存结算。重试和成片修改同样有独立调用记录。充值由管理员确认收款后入账。
 
@@ -160,7 +160,7 @@ curl https://vedio.myaihub.asia/api/edits \
 - `GET /api/billing`：余额、预占、平台模型和估算。
 - `GET /api/wallet`：账户余额与兼容版最近流水。
 - `GET /api/wallet/ledger?kind=deposit&offset=0`：充值与调账分页；`kind=all` 包含模型扣费。每页 50 笔。
-- `GET /api/usage?offset=0`：模型调用分页，每页 50 笔；支持 `model`、`role`、`mode`、`status`、`job_id`、`from`、`to`。日期为 UTC，结束日期包含当天。返回 `items`、`total`、`summary`。
+- `GET /api/usage?offset=0`：仅平台模型调用分页，每页 50 笔；支持 `model`、`role`、`mode`、`status`、`job_id`、`from`、`to`。日期为 UTC，结束日期包含当天。返回 `items`、`total`、`summary`。
 
 调用状态：`reserved` 调用中，`settled` 已结算，`rejected` 上游明确拒绝且未收费，`unmetered` 用量或结算待核对。费用字段 `cost_micro` 为百万分之一元，`charged_cents` 为实际余额扣款（分）；同一任务累计取整，因此个别小调用扣款可以为 0。
 

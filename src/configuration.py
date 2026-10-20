@@ -171,7 +171,8 @@ def secret_field(key):
 
 def public_config(value):
     if isinstance(value, dict):
-        return {key: ("<redacted>" if secret_field(key) else public_config(item)) for key, item in value.items()}
+        # Billing routing is runtime-only; changing it must not invalidate content caches.
+        return {key: ("<redacted>" if secret_field(key) else public_config(item)) for key, item in value.items() if key != 'platform_billing'}
     if isinstance(value, list):
         return [public_config(item) for item in value]
     return value

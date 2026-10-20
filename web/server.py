@@ -341,6 +341,8 @@ def poster(identity:str):
 @app.get('/api/jobs/{identity}/usage')
 def job_usage(identity:str):
     record=jobs[identity]
+    if not (current_config.get() or {}).get('use_platform'):
+        return {'events':[],'unmetered_calls':0}
     path=Path(record.get('project',''))/'usage.jsonl'
     events=[]
     if path.is_file():

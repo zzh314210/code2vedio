@@ -15,6 +15,7 @@ def as_dict(value):
 
 
 def record_usage(settings, role, usage=None, response_id=None, actual_model=None, attempt_id=None, extra=None):
+    if settings.get('platform_billing') is False:return
     filename=settings.get('usage_file')
     if not filename:return
     raw=as_dict(usage)

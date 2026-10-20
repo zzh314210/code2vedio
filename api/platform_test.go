@@ -152,15 +152,77 @@ func TestPrepayConcurrentReservationsAndBalanceReduction(t *testing.T) {
 		t.Fatal("unbounded provider metadata stored")
 	}
 }
-func TestUsageOwnershipBYOKAndReconciliation(t *testing.T) {
+func TestBYOKBypassesPrepayAndLocalLedger(t *testing.T) {
 	store, s := fixture(t)
 	u, cookie := registered(t, s, "own-key")
+	c := defaultConfig()
+	c.Text.Model = "byok-model"
+	if err := store.saveTaskConfig(u.ID, "own-job", c); err != nil {
+		t.Fatal(err)
+	}
+	for _, enabled := range []bool{false, true} {
+		s.Billing.Enabled = enabled
+		if err := s.platformAdmission(u.ID, c); err != nil {
+			t.Fatal("BYOK requires prepayment", err)
+		}
+		for _, role := range []string{"text", "vision"} {
+			d := meterRequest{ID: randomID(16), UserID: u.ID, JobID: "own-job", Role: role, Model: "byok-model", InputBound: 1000, MaxOutput: 1000}
+			result, err := s.Billing.authorize(d)
+			if err != nil || result["billing"] != false {
+				t.Fatal("BYOK entered local billing", result, err)
+			}
+			d.Metered, d.Input, d.Output = true, 200, 300
+			result, err = s.Billing.settle(d)
+			if err != nil || result["billing"] != false {
+				t.Fatal("BYOK entered settlement", result, err)
+			}
+		}
+	}
+	for _, table := range []string{"billing_calls", "ledger"} {
+		var n int
+		if err := store.DB.QueryRow("SELECT count(*) FROM "+table+" WHERE user_id=?", u.ID).Scan(&n); err != nil || n != 0 {
+			t.Fatal("BYOK created local records", table, n, err)
+		}
+	}
+	after, _ := store.user(u.ID)
+	if after.Balance != 0 {
+		t.Fatal("BYOK changed balance")
+	}
+	// Legacy zero-cost BYOK records are excluded from both user/admin statistics.
+	legacy := randomID(16)
+	_, err := store.DB.Exec("INSERT INTO billing_calls(id,user_id,job_id,model,role,price,reserved_cents,status,usage,mode,created_at) VALUES(?,?,?,'byok-model','text','{}',0,'unmetered',?,'byok',?)", legacy, u.ID, "own-job", `{"input_tokens":999}`, time.Now().Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := adminCookie(t, store, s)
+	for _, check := range []struct {
+		path   string
+		cookie *http.Cookie
+	}{{"/api/usage", cookie}, {"/api/admin/usage?user_id=" + u.ID, admin}} {
+		w := call(t, s, "GET", check.path, nil, check.cookie, "")
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `"total":0`) || strings.Contains(w.Body.String(), "byok-model") {
+			t.Fatal("BYOK appeared in local usage", w.Code, w.Body.String())
+		}
+	}
+	w := call(t, s, "POST", "/api/admin/usage/"+legacy+"/reconcile", map[string]any{"input_tokens": 1, "output_tokens": 1, "note": "not a platform record"}, admin, "")
+	if w.Code != 404 {
+		t.Fatal("BYOK allowed manual local settlement", w.Code)
+	}
+}
+
+func TestPlatformUsageOwnershipAndReconciliation(t *testing.T) {
+	store, s := fixture(t)
+	s.Billing.Enabled = true
+	u, cookie := registered(t, s, "platform-key")
 	other, otherCookie := registered(t, s, "another-user")
 	_ = other
 	c := defaultConfig()
-	c.Text.Model = "byok-model"
+	c.UsePlatform = true
+	c.Text.Model = "platform-model"
+	c.PlatformPrices = []Rate{{Model: "platform-model", Role: "text", Input: 2000000, Output: 8000000, Cached: 200000, MaxInput: 1000000}}
+	store.credit(store.adminID(), u.ID, 500, "test prepayment", "platform-prepay-001")
 	store.saveTaskConfig(u.ID, "own-job", c)
-	d := meterRequest{ID: randomID(16), UserID: u.ID, JobID: "own-job", Role: "text", Model: "byok-model", InputBound: 1000, MaxOutput: 1000}
+	d := meterRequest{ID: randomID(16), UserID: u.ID, JobID: "own-job", Role: "text", Model: "platform-model", InputBound: 1000, MaxOutput: 1000}
 	if _, err := s.Billing.authorize(d); err != nil {
 		t.Fatal(err)
 	}
@@ -172,20 +234,20 @@ func TestUsageOwnershipBYOKAndReconciliation(t *testing.T) {
 		t.Fatal(err)
 	}
 	after, _ := store.user(u.ID)
-	if after.Balance != 0 {
-		t.Fatal("BYOK charged")
+	if after.Balance != 499 {
+		t.Fatal("platform charge missing")
 	}
 	w := call(t, s, "GET", "/api/usage", nil, cookie, "")
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "byok-model") || !strings.Contains(w.Body.String(), `"input_tokens":200`) {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "platform-model") || !strings.Contains(w.Body.String(), `"input_tokens":200`) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	w = call(t, s, "GET", "/api/usage?user_id="+u.ID, nil, otherCookie, "")
-	if w.Code != 200 || strings.Contains(w.Body.String(), "byok-model") {
+	if w.Code != 200 || strings.Contains(w.Body.String(), "platform-model") {
 		t.Fatal("cross-account usage access")
 	}
 	admin := adminCookie(t, store, s)
 	w = call(t, s, "GET", "/api/admin/usage?user_id="+u.ID, nil, admin, "")
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "byok-model") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "platform-model") {
 		t.Fatal("admin usage unavailable")
 	}
 	d.ID = randomID(16)

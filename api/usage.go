@@ -98,7 +98,7 @@ func (s *Server) usageList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	where := []string{"1=1"}
+	where := []string{"b.mode='platform'"}
 	args := []any{}
 	uid := current(r).ID
 	if admin {
@@ -233,7 +233,7 @@ func (s *Server) reconcileUsage(w http.ResponseWriter, r *http.Request) {
 	var m meterRequest
 	var created int64
 	var status string
-	err := s.Store.DB.QueryRow("SELECT user_id,job_id,model,created_at,status FROM billing_calls WHERE id=?", r.PathValue("id")).Scan(&m.UserID, &m.JobID, &m.Model, &created, &status)
+	err := s.Store.DB.QueryRow("SELECT user_id,job_id,model,created_at,status FROM billing_calls WHERE id=? AND mode='platform'", r.PathValue("id")).Scan(&m.UserID, &m.JobID, &m.Model, &created, &status)
 	if err != nil {
 		fail(w, 404, "调用记录不存在。")
 		return

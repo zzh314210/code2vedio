@@ -9,6 +9,7 @@ import httpx
 class BillingError(RuntimeError):pass
 
 def call(settings,operation,payload):
+    if settings.get('platform_billing') is False:return {'billing':False}
     context=settings.get('billing_context')
     if not context:return {'billing':False}
     directory=Path(context['private'])

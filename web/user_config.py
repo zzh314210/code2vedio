@@ -96,5 +96,8 @@ def runtime_config(base, personal, library):
     result['vision'].update(enabled=True, inherit_text=False, frames=12, rounds=2, require_pass=True)
     result['tts'].update(personal.get('tts', {}))
     result['tts']['public_endpoint_only'] = True
+    # This switch comes only from the signed task configuration, never a channel.
+    for role in ('text', 'vision', 'tts'):
+        result[role]['platform_billing'] = personal.get('use_platform') is True and role != 'tts'
     result['teaching_research'] = {**result.get('teaching_research', {}), 'library': str(library), 'source_ids': [], 'reference_urls': []}
     return result

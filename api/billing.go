@@ -125,6 +125,10 @@ func (b *Billing) authorize(d meterRequest) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Personal API calls are settled by the user's provider, outside our ledger.
+	if !cfg.UsePlatform {
+		return map[string]any{"billing": false}, nil
+	}
 	paid := cfg.UsePlatform
 	if paid && !b.Enabled {
 		return nil, errors.New("平台计费已暂停，请稍后再试。")
@@ -251,6 +255,10 @@ func (b *Billing) settle(d meterRequest) (map[string]any, error) {
 	}
 	if uid != d.UserID || job != d.JobID {
 		return nil, errors.New("计费凭证不属于此任务。")
+	}
+	// Older releases recorded zero-cost BYOK usage. Never settle those locally.
+	if mode != "platform" {
+		return map[string]any{"billing": false}, nil
 	}
 	if status == "settled" || status == "rejected" {
 		return map[string]any{"billing": true, "charged_cents": charged}, nil

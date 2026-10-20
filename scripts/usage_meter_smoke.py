@@ -45,10 +45,40 @@ with tempfile.TemporaryDirectory() as tmp:
  assert captures[0][1]['input_bound']==len('中文 prompt'.encode('utf8'))+1024
  assert event['duration_ms']>=0
  gateway.client.close()
+ # Signed personal API configuration bypasses both the credit service and local
+ # usage files, even when a legacy task still carries billing paths/context.
+ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'web'))
+ from user_config import runtime_config
+ from configuration import DEFAULTS,public_config
+ from billing_client import call as bill
+ personal={'use_platform':False,'text':{**config,'platform_billing':True},'vision_inherit':True}
+ runtime=runtime_config(DEFAULTS,personal,Path(tmp)/'library.sqlite3')
+ for role in ('text','vision'):
+  channel=runtime[role]
+  channel['usage_file']=str(Path(tmp)/(role+'-byok.jsonl'))
+  channel['billing_context']={'private':str(Path(tmp)/'unavailable-billing-service'),'user_id':'own-user','job_id':'own-job'}
+  assert channel['platform_billing'] is False
+  assert 'platform_billing' not in public_config(channel),'Runtime billing policy changed the content cache'
+  own=ModelGateway(channel,role)
+  response=NS(id='own-response',model=channel['model'],usage=usage,choices=[NS(finish_reason='stop',message=NS(content='personal response'))])
+  with patch('billing_client.httpx.Client',side_effect=AssertionError('BYOK contacted local billing')),patch.object(own.client.chat.completions,'create',return_value=response):
+   assert own.request('no prepayment required')[0]=='personal response'
+   assert bill(channel,'authorize',{'id':'own-call'})=={'billing':False}
+   record_usage(channel,role,extra={'error_type':'TimeoutError'})
+  assert not Path(channel['usage_file']).exists(),'BYOK wrote local usage records'
+  own.client.close()
+ platform=runtime_config(DEFAULTS,{**personal,'use_platform':True},Path(tmp)/'library.sqlite3')
+ assert platform['text']['platform_billing'] and platform['vision']['platform_billing']
+ assert not platform['tts']['platform_billing']
+ paid={**config,'platform_billing':True,'usage_file':str(Path(tmp)/'platform.jsonl')}
+ with patch('usage_meter.billing_call',return_value={'billing':True}) as settle:
+  record_usage(paid,'text',usage)
+  settle.assert_called_once()
+ assert Path(paid['usage_file']).is_file(),'Platform metering was disabled'
  transport=PublicTransport()
  with patch('public_transport.socket.getaddrinfo',return_value=[(2,1,6,'',('127.0.0.1',443))]):
   try:transport.handle_request(httpx.Request('POST','https://example.com/v1'))
   except ValueError:pass
   else:raise AssertionError('DNS rebound to private address was accepted')
  transport.close()
-print('PASS: actual usage recorded before validation failures; cached tokens retained; distinct attempt IDs; private DNS targets rejected.')
+print('PASS: platform usage retained before validation failures; BYOK bypasses billing and usage files; cache identity unchanged; private DNS targets rejected.')
