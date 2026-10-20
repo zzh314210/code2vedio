@@ -73,7 +73,8 @@ def validate_snippet(code, extensions=None):
     # Catch invented constructors before spending minutes on a full render.
     # Only check direct class-like calls; local variables/method chains retain
     # normal Python semantics and the existing sandbox remains authoritative.
-    import manim
+    from execution import manim_api_names
+    api_names = manim_api_names()
     for node in ast.walk(tree):
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and isinstance(node.func.value, ast.Name) and node.func.value.id == 'self'
@@ -85,7 +86,7 @@ def validate_snippet(code, extensions=None):
                         raise ValueError('函数图标题最多24字，较长解释请放入旁白。')
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             name = node.func.id
-            if name[:1].isupper() and not hasattr(manim, name):
+            if name[:1].isupper() and name not in api_names:
                 raise ValueError(f"Manim 没有 {name}。请使用真实 API，例如 DashedVMobject(Circle(...))；不要编造类名。")
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self" and node.attr == "extension":
@@ -753,6 +754,9 @@ class VideoPipeline:
             if stop_after == "assets":
                 return asset_file
             self.event("code", "running", "生成配音时长驱动的 Manim 代码")
+            # Detect local validation failures before paying for generated code.
+            from execution import manim_api_names
+            manim_api_names()
             codes = {}
             for section in storyboard["sections"]:
                 codes[section["id"]] = self.cached_json(f"{section['id']}_code.json", self.prompt("code", code_prompt(section, templates=self.templates, settings=self.config["video"])), lambda value: self.validate_snippets(value, len(section["beats"])))

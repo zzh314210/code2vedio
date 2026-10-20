@@ -1,14 +1,18 @@
 import ast
 import contextlib
+import json
 import math
 import ntpath
 import os
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
 import threading
 import uuid
 import warnings
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -94,6 +98,32 @@ def render_environment(project):
         validate_output(root, directory).mkdir(parents=True, exist_ok=True)
     environment.update({"HOME": str(paths["home"]), "USERPROFILE": str(paths["home"]), "TMP": str(paths["tmp"]), "TEMP": str(paths["tmp"]), "TMPDIR": str(paths["tmp"]), "XDG_CACHE_HOME": str(paths["cache"]), "XDG_CONFIG_HOME": str(paths["config"]), "XDG_DATA_HOME": str(paths["data"]), "APPDATA": str(paths["config"]), "LOCALAPPDATA": str(paths["cache"]), "MPLCONFIGDIR": str(paths["config"] / "matplotlib"), "PYTHONPATH": str(validate_output(root, "code/runtime")), "PYTHONSAFEPATH": "1", "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONIOENCODING": "utf-8"})
     return environment
+
+
+@lru_cache(maxsize=1)
+def manim_api_names():
+    """Inspect the installed library without importing it into the web worker.
+
+    Manim reads ~/.config/manim/manim.cfg on import, even when XDG_CONFIG_HOME
+    is set. The service intentionally cannot access /home (ProtectHome=true).
+    Use the same clean environment as rendering, with disposable directories;
+    only trusted library code runs here, never a model-generated snippet.
+    """
+    try:
+        with tempfile.TemporaryDirectory(prefix="c2v-manim-api-") as temporary:
+            environment = render_environment(temporary)
+            output = _run(
+                [sys.executable, "-c", "import json, manim; print(json.dumps([name for name in dir(manim) if name[:1].isupper()]))"],
+                temporary, environment, 60,
+            )
+        names = json.loads(output)
+        if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+            raise ValueError("Invalid Manim API catalogue")
+        if not {"Circle", "Scene", "Text"}.issubset(names):
+            raise ValueError("Incomplete Manim API catalogue")
+        return frozenset(names)
+    except (OSError, RuntimeError, ValueError) as failure:
+        raise RenderInfrastructureError("动画代码校验环境未能启动，请稍后重试。") from failure
 
 
 def _container_path(project, value):
