@@ -1,0 +1,11 @@
+[Unit]
+Description=Shared Code2Video resource budget (web, workers and render containers)
+
+[Slice]
+CPUAccounting=true
+CPUQuota=250%
+MemoryAccounting=true
+MemoryHigh=1800M
+MemoryMax=2G
+MemorySwapMax=4G
+TasksMax=1024

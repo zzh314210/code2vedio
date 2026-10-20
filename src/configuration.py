@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULTS = {
     "style": "default",
+    "background_music": {"enabled": False, "volume": .16},
     "text": {
         "protocol": "responses", "base_url": "https://api.openai.com/v1",
         "api_key": "${OPENAI_API_KEY}", "model": "", "timeout": 180,

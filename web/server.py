@@ -49,8 +49,13 @@ PRIVATE=Path(os.environ.get('C2V_ACCOUNT_DIR',ROOT/'private'))
 current_user=ContextVar('studio_user',default=None)
 current_config=ContextVar('studio_config',default=None)
 current_job_id=ContextVar('job_id',default=None)
+from background_music_api import BackgroundMusic
+music_service=BackgroundMusic(ROOT,PRIVATE,lambda:current_user.get())
+app.include_router(music_service.router)
 config_cache={}
 legacy_owner=None
+production_queue=None
+storage=None
 
 
 def user_settings(owner_id=None):
@@ -75,6 +80,8 @@ def job_settings(record, frozen=None):
 jobs={}
 STYLE_IDS={'studio_noir','studio_editorial','studio_sketch'}
 STUDIO_PROJECTS=Path(os.environ.get('C2V_PROJECT_DIR',ROOT/'video_projects'))
+from storage_lifecycle import UserStorage,user_directory,records as storage_records
+storage=UserStorage(ROOT,STUDIO_PROJECTS,PRIVATE)
 from editing_api import EditingService
 editing_service=EditingService(STUDIO_PROJECTS,lambda:current_user.get(),user_settings,executor,lock,lambda:any(j.get('status') in ('queued','running','revising') for j in jobs.values()),PRIVATE,lambda:current_job_id.get())
 app.include_router(editing_service.router)
@@ -130,7 +137,10 @@ def update_job(identity,**values):
     with lock:
         if values.get('stage',jobs[identity].get('stage'))!=jobs[identity].get('stage') or (values.get('status')=='running' and jobs[identity].get('status')!='running'):
             values['stage_started_at']=time.time()
+        previous=jobs[identity].get('status')
         jobs[identity].update(values)
+        storage.stamp(jobs[identity],previous)
+        if production_queue:production_queue.progress(identity,jobs[identity].get('stage','prepare'))
         jobs[identity]['updated_at']=time.time()
         record=jobs[identity].copy()
     if record.get('project'):
@@ -166,19 +176,22 @@ def work(identity,project,prompt,config,materials,resume=False):
 
 def discover():
     # Restartable library; only our studio job metadata is public.
-    for project in STUDIO_PROJECTS.glob('*'):
-        metadata=project/'studio_job.json'
+    for metadata in storage_records(STUDIO_PROJECTS,'studio_job.json'):
+        project=metadata.parent
         if metadata.is_file():
             try:
                 record=json.loads(metadata.read_text(encoding='utf8'))
                 if record.get('id') not in jobs or record.get('updated_at',0)>jobs[record['id']].get('updated_at',0):
-                    if record.get('status') in ('running','queued','revising'):record.update(status='failed',message='服务已重启，请重新生成。')
+                    if record.get('status') in ('running','queued','revising') and not (production_queue and production_queue.has_pending(record['id'])):record.update(status='failed',message='服务已重启，请重新生成。')
                     jobs[record['id']]={**record,'owner_id':record.get('owner_id') or legacy_owner,'project':str(project)}
             except (ValueError,KeyError):pass
+    for expired in storage.expired_records('video'):
+        jobs[expired['id']]=expired
     acceptance=ROOT/'deliverables'/'manifest.json'
     if acceptance.is_file():
         for item in json.loads(acceptance.read_text(encoding='utf8')).get('videos',[]):
             identity='baseline-'+item['style']
+            if identity in jobs and not jobs[identity].get('owner_id'):jobs[identity]['owner_id']=legacy_owner
             existing=next((j for j in jobs.values() if j.get('project') and Path(j['project']).resolve()==(ROOT/item['project']).resolve()),None)
             if existing:
                 existing.update(poster=f"/api/jobs/{existing['id']}/poster",poster_path=item['poster'])
@@ -193,7 +206,15 @@ def get_jobs():
 
 def public_job(record):
     result={k:v for k,v in record.items() if k not in ('project','path','poster_path','owner_id','revision_request_id')}
+    if production_queue:
+        queue_state=production_queue.snapshot(record['id'])
+        if queue_state:result['queue']=queue_state
     result['can_revise']=bool(record.get('status')=='complete' and record.get('project') and all((Path(record['project'])/'output'/name).is_file() for name in ('final.mp4','manifest.json','outline.json','storyboard.json')))
+    selection=Path(record['project'])/'input/background_music/selection.json' if record.get('project') else None
+    if selection and selection.is_file():
+        result['background_music']=json.loads(selection.read_text(encoding='utf8'))
+        if result.get('status')=='complete' and result['background_music'].get('credit'):
+            result['music_credit']=f"/api/jobs/{record['id']}/music-credit"
     return result
 
 @app.get('/api/jobs/{identity}')
@@ -206,82 +227,97 @@ def get_job(identity:str):
 
 
 @app.post('/api/jobs',status_code=202)
-async def create_job(prompt:Annotated[str,Form()],style:Annotated[str,Form()],duration:Annotated[int,Form()]=30,orientation:Annotated[str,Form()]='landscape',files:Annotated[list[UploadFile]|None,File()]=None,auto_approve:Annotated[bool,Form()]=False,reference_urls:Annotated[str,Form()]='',source_ids:Annotated[str,Form()]='',template_id:Annotated[str,Form()]=''):
+async def create_job(prompt:Annotated[str,Form()],style:Annotated[str,Form()],duration:Annotated[int,Form()]=30,orientation:Annotated[str,Form()]='landscape',files:Annotated[list[UploadFile]|None,File()]=None,auto_approve:Annotated[bool,Form()]=False,reference_urls:Annotated[str,Form()]='',source_ids:Annotated[str,Form()]='',template_id:Annotated[str,Form()]='',bgm_enabled:Annotated[bool,Form()]=False,bgm_track_id:Annotated[str,Form()]='',bgm_upload_id:Annotated[str,Form()]='',bgm_volume:Annotated[float,Form()]=.16):
     if not 5<=len(prompt.strip())<=6000:raise HTTPException(400,'请填写5至6000字的视频需求。')
     if style not in STYLE_IDS:raise HTTPException(400,'请选择可用主题。')
     if not 15<=duration<=(300 if template_id=='notes' else 120) or orientation not in ('landscape','portrait'):raise HTTPException(400,'视频参数无效。')
+    if production_queue:production_queue.ensure_capacity(current_user.get()['id'])
     personal=user_settings()
     if not visible_config(current_config.get())['speech_ready']:raise HTTPException(400,'请完善配音服务配置。')
     if not all(personal[role].get(key) for role in ('text','vision') for key in ('api_key','model','base_url')):raise HTTPException(400,'请先配置生成与视觉审核 API Key。')
     if len(files or [])>10:raise HTTPException(400,'每次最多10份素材。')
+    music,music_source=music_service.select(bgm_enabled,bgm_track_id,bgm_upload_id,bgm_volume)
     with lock:
-        if editing_service.busy() or any(j.get('status') in ('queued','running','revising') for j in jobs.values()):raise HTTPException(409,'已有视频正在生成，完成后即可开始下一个。')
-    identity=current_job_id.get() or uuid.uuid4().hex[:12];project=STUDIO_PROJECTS/f'studio-{identity}'
-    upload_directory=project/'uploads';upload_directory.mkdir(parents=True)
-    material=[]
-    for index,upload in enumerate(files or []):
-        name=f'{index:02d}-'+safe_name(upload.filename or 'material')
-        target=upload_directory/name
-        total=0
-        with target.open('wb') as stream:
-            while chunk:=await upload.read(1024*1024):
-                total+=len(chunk)
-                if total>50*1024*1024:
-                    target.unlink(missing_ok=True)
-                    raise HTTPException(413,'单份素材请控制在50 MB以内。')
-                stream.write(chunk)
-        material.append(target)
-    urls=[u.strip() for u in reference_urls.splitlines() if u.strip()]
-    if len(urls)>20:raise HTTPException(400,'每次最多20条参考链接。')
-    from teaching_research import public_url
+        if not production_queue and (editing_service.busy() or any(j.get('status') in ('queued','running','revising') for j in jobs.values())):raise HTTPException(409,'已有视频正在生成，完成后即可开始下一个。')
+    identity=current_job_id.get() or uuid.uuid4().hex[:12];project=user_directory(STUDIO_PROJECTS,'studio',identity,current_user.get()['id'])
     try:
-        for url in urls:public_url(url)
-        chosen=json.loads(source_ids) if source_ids else []
-        if not isinstance(chosen,list) or len(chosen)>20 or any(not isinstance(x,str) for x in chosen):raise ValueError('参考素材选择无效')
-    except Exception:raise HTTPException(400,'请检查公开参考链接和素材选择。')
-    from video_templates import apply_template
-    try:c=apply_template(personal,template_id)
-    except ValueError as error:raise HTTPException(400,str(error))
-    library=TeachingSources(personal['teaching_research']).library
-    if any(not library.get(source_id) for source_id in chosen):raise HTTPException(400,'所选素材不在你的素材库中，请重新选择。')
-    if template_id=='notes':
-        from materials import load_materials
+        upload_directory=project/'uploads';upload_directory.mkdir(parents=True)
+        material=[]
+        for index,upload in enumerate(files or []):
+            name=f'{index:02d}-'+safe_name(upload.filename or 'material')
+            target=upload_directory/name
+            total=0
+            with target.open('wb') as stream:
+                while chunk:=await upload.read(1024*1024):
+                    total+=len(chunk)
+                    if total>50*1024*1024:
+                        target.unlink(missing_ok=True)
+                        raise HTTPException(413,'单份素材请控制在50 MB以内。')
+                    stream.write(chunk)
+            material.append(target)
+        urls=[u.strip() for u in reference_urls.splitlines() if u.strip()]
+        if len(urls)>20:raise HTTPException(400,'每次最多20条参考链接。')
+        from teaching_research import public_url
         try:
-            if any(path.suffix.lower() not in {'.txt','.md','.markdown','.pdf'} for path in material):raise ValueError('笔记请使用 TXT、Markdown 或可复制文字的 PDF。')
-            note_data=load_materials(material,prompt,c['materials'])
-            if sum(len(x['text']) for x in note_data['selected_chunks'])<40:raise ValueError('请上传至少40字的笔记：支持 TXT、Markdown 和可复制文字的 PDF；扫描件请先转成文字。')
-            if note_data['omitted_chunks']:raise ValueError('笔记超过本课容量，请按章节拆分上传，避免复盘遗漏。')
-        except Exception as error:
+            for url in urls:public_url(url)
+            chosen=json.loads(source_ids) if source_ids else []
+            if not isinstance(chosen,list) or len(chosen)>20 or any(not isinstance(x,str) for x in chosen):raise ValueError('参考素材选择无效')
+        except Exception:raise HTTPException(400,'请检查公开参考链接和素材选择。')
+        from video_templates import apply_template
+        try:c=apply_template(personal,template_id)
+        except ValueError as error:raise HTTPException(400,str(error))
+        library=TeachingSources(personal['teaching_research']).library
+        if any(not library.get(source_id) for source_id in chosen):raise HTTPException(400,'所选素材不在你的素材库中，请重新选择。')
+        if template_id=='notes':
+            from materials import load_materials
+            try:
+                if any(path.suffix.lower() not in {'.txt','.md','.markdown','.pdf'} for path in material):raise ValueError('笔记请使用 TXT、Markdown 或可复制文字的 PDF。')
+                note_data=load_materials(material,prompt,c['materials'])
+                if sum(len(x['text']) for x in note_data['selected_chunks'])<40:raise ValueError('请上传至少40字的笔记：支持 TXT、Markdown 和可复制文字的 PDF；扫描件请先转成文字。')
+                if note_data['omitted_chunks']:raise ValueError('笔记超过本课容量，请按章节拆分上传，避免复盘遗漏。')
+            except Exception as error:
+                import shutil
+                shutil.rmtree(project,ignore_errors=True)
+                message=str(error) if isinstance(error,ValueError) and not isinstance(error,UnicodeError) else '无法读取这份笔记，请使用 UTF-8 文本或可复制文字的 PDF。'
+                raise HTTPException(400,message)
+        c=merge(c,{'teaching_research':{'reference_urls':urls,'source_ids':chosen,'enabled':'auto' if urls or chosen else False}})
+        c=merge(c,{'style':style,'video':{'quality':'high','fps':30,'orientation':orientation,'target_duration':duration,'max_sections':min(6,max(1,__import__('math').ceil(duration/60))),'max_beats':6,'render_timeout':900,'pause_seconds':.12},'assets':{'enabled':False}})
+        c['video_overrides']={k:v for k,v in c['video'].items() if k in ('quality','fps','orientation','target_duration','max_sections','max_beats','render_timeout','pause_seconds')}
+        c['background_music']=music_service.freeze(music,music_source,project)
+        with lock:
+            if not production_queue and (editing_service.busy() or any(j.get('status') in ('queued','running','revising') for j in jobs.values())):
+                import shutil
+                shutil.rmtree(project,ignore_errors=True)
+                raise HTTPException(409,'已有视频正在生成，请稍后重试。')
+            jobs[identity]={'id':identity,'owner_id':current_user.get()['id'],'prompt':prompt.strip(),'style':style,'duration':duration,'template_id':template_id,'status':'queued','stage':'outline','message':'已加入生成队列','created_at':time.time(),'stage_started_at':time.time(),'project':str(project)}
+        PlanningReview(project,auto_approve=auto_approve)
+        update_job(identity,status='queued',auto_approve=auto_approve)
+        executor.submit(work,identity,project,prompt.strip(),c,material)
+        return {'id':identity}
+    except Exception:
+        if identity not in jobs:
             import shutil
             shutil.rmtree(project,ignore_errors=True)
-            message=str(error) if isinstance(error,ValueError) and not isinstance(error,UnicodeError) else '无法读取这份笔记，请使用 UTF-8 文本或可复制文字的 PDF。'
-            raise HTTPException(400,message)
-    c=merge(c,{'teaching_research':{'reference_urls':urls,'source_ids':chosen,'enabled':'auto' if urls or chosen else False}})
-    c=merge(c,{'style':style,'video':{'quality':'high','fps':30,'orientation':orientation,'target_duration':duration,'max_sections':min(6,max(1,__import__('math').ceil(duration/60))),'max_beats':6,'render_timeout':900,'pause_seconds':.12},'assets':{'enabled':False}})
-    c['video_overrides']={k:v for k,v in c['video'].items() if k in ('quality','fps','orientation','target_duration','max_sections','max_beats','render_timeout','pause_seconds')}
-    with lock:
-        if editing_service.busy() or any(j.get('status') in ('queued','running','revising') for j in jobs.values()):
-            import shutil
-            shutil.rmtree(project,ignore_errors=True)
-            raise HTTPException(409,'已有视频正在生成，请稍后重试。')
-        jobs[identity]={'id':identity,'owner_id':current_user.get()['id'],'prompt':prompt.strip(),'style':style,'duration':duration,'template_id':template_id,'status':'queued','stage':'outline','message':'已加入生成队列','created_at':time.time(),'stage_started_at':time.time(),'project':str(project)}
-    PlanningReview(project,auto_approve=auto_approve)
-    update_job(identity,status='queued',auto_approve=auto_approve)
-    executor.submit(work,identity,project,prompt.strip(),c,material)
-    return {'id':identity}
+        elif production_queue and not production_queue.has_pending(identity):
+            update_job(identity,status='failed',message='任务未能加入队列，请稍后重试。')
+        raise
+
 
 @app.post('/api/jobs/{identity}/retry',status_code=202)
 def retry(identity:str):
     with lock:
         record=jobs.get(identity)
-        if not record or not record.get('project') or record.get('status')!='failed':raise HTTPException(400,'该任务无法重试。')
-        if editing_service.busy() or any(j.get('status') in ('queued','running','revising') for j in jobs.values()):raise HTTPException(409,'请等待当前任务完成。')
+        if not record or not record.get('project') or record.get('status') not in ('failed','cancelled'):raise HTTPException(400,'该任务无法重试。')
+        if production_queue:production_queue.ensure_capacity(record['owner_id'])
+        if not production_queue and (editing_service.busy() or any(j.get('status') in ('queued','running','revising') for j in jobs.values())):raise HTTPException(409,'请等待当前任务完成。')
         if record.get('revision_parent') and not record.get('revision_prepared'):
             return revision_service.retry(identity,record)
         project=Path(record['project'])
         if not (project/'output/manifest.json').is_file():
             c=job_settings(record)
             c=merge(c,{'style':record['style'],'video':{'target_duration':record['duration']}})
+            music_selection=project/'input/background_music/selection.json'
+            if music_selection.is_file():c['background_music']=json.loads(music_selection.read_text())
             materials=list((project/'uploads').glob('*'))
             update_job(identity,status='queued',message='正在重新启动未完成的生成步骤')
             executor.submit(work,identity,project,record['prompt'],c,materials,False)
@@ -301,7 +337,11 @@ def retry(identity:str):
                 if 'cube_lesson' in previous_task.get('prompts',{}).get('code',''):
                     c['task']=merge(previous_task,{'component_profile':'cube_baseline'})
                     c['video_overrides']=merge(c.get('video_overrides',{}),{'layout':'canvas','style_lock':False,'brand':'折解 / 空间推理'})
-            project=STUDIO_PROJECTS/f'studio-{identity}-r{uuid.uuid4().hex[:4]}'
+            project=user_directory(STUDIO_PROJECTS,'studio',identity+'-r'+uuid.uuid4().hex[:4],record['owner_id'])
+            music_directory=old/'input/background_music'
+            if music_directory.is_dir():
+                import shutil
+                shutil.copytree(music_directory,project/'input/background_music')
             materials=[f for f in (old/'input/materials').iterdir() if f.is_file() and f.name!='index.json']
             update_job(identity,status='queued',message='正在用更新后的主题重新生成',project=str(project),parent=old.name)
             executor.submit(work,identity,project,record['prompt'],c,materials,False)
@@ -328,6 +368,16 @@ def subtitles(identity:str):
     import re
     content=re.sub(r'(\d{2}:\d{2}:\d{2}),(\d{3})',r'\1.\2',target.read_text(encoding='utf8'))
     return Response('WEBVTT\n\n'+content,media_type='text/vtt')
+
+
+@app.get('/api/jobs/{identity}/music-credit')
+def music_credit(identity:str):
+    record=jobs.get(identity)
+    if not record or record.get('status')!='complete' or not record.get('project'):
+        raise HTTPException(404,'音乐署名尚未就绪。')
+    target=Path(record['project'])/'output/music-credit.txt'
+    if not target.is_file():raise HTTPException(404,'此作品无需附加音乐署名。')
+    return FileResponse(target,media_type='text/plain; charset=utf-8',filename='music-credit.txt')
 
 
 @app.get('/api/jobs/{identity}/poster')
@@ -429,6 +479,7 @@ def validate_document(pipe,stage,document):
 
 def enqueue_resume(identity,project):
     record=jobs[identity]
+    if production_queue:production_queue.ensure_capacity(record['owner_id'])
     manifest=json.loads((project/'output/manifest.json').read_text(encoding='utf8'))
     c=job_settings(record,manifest['config'])
     update_job(identity,status='queued',message='正在从已确认的内容继续生成')
@@ -467,19 +518,22 @@ def save_planning(identity:str,stage:str,edit:PlanningEdit):
 def revise_planning(identity:str,stage:str,edit:PlanningRevision):
     with lock:
         record,project=reviewed_job(identity,True)
-        if editing_service.busy() or any(j.get('status') in ('queued','running','revising') for j in jobs.values()):raise HTTPException(409,'请等待当前任务完成。')
+        if production_queue:production_queue.ensure_capacity(record['owner_id'])
+        if not production_queue and (editing_service.busy() or any(j.get('status') in ('queued','running','revising') for j in jobs.values())):raise HTTPException(409,'请等待当前任务完成。')
         if stage not in ('outline','storyboard'):raise HTTPException(400,'仅支持大纲和分镜。')
         try:
             review=PlanningReview(project)
             if stage not in review.snapshot()['documents']:raise ReviewConflict('该阶段尚未生成。')
             review.check_version(stage,edit.version)
         except ReviewConflict as e:raise HTTPException(409,str(e))
+        runtime=job_settings(record)
         update_job(identity,status='revising',stage=stage,message='AI 正在按意见修改，完成后仍需确认')
-    executor.submit(revise_worker,identity,project,record,stage,edit,job_settings(record))
-    return {'id':identity,'status':'revising'}
+        executor.submit(revise_worker,identity,project,record,stage,edit,runtime)
+    return {'id':identity,'status':jobs[identity]['status']}
 
 
 def revise_worker(identity,project,record,stage,edit,runtime):
+    update_job(identity,status='revising',message='AI 正在按意见修改，完成后仍需确认')
     try:
         with project_lock(project):
             pipe=planning_engine(record,project,runtime)
@@ -503,7 +557,8 @@ def approve_planning(identity:str,stage:str,approval:PlanningApproval):
     if stage not in ('outline','storyboard'):raise HTTPException(400,'仅支持大纲和分镜。')
     with lock:
         record,project=reviewed_job(identity,True)
-        if editing_service.busy() or any(j.get('status') in ('running','queued','revising') for j in jobs.values()):raise HTTPException(409,'请等待当前生成任务完成。')
+        if production_queue:production_queue.ensure_capacity(record['owner_id'])
+        if not production_queue and (editing_service.busy() or any(j.get('status') in ('running','queued','revising') for j in jobs.values())):raise HTTPException(409,'请等待当前生成任务完成。')
         try:
             with project_lock(project):
                 pipe=planning_engine(record,project)
@@ -520,7 +575,8 @@ def approve_planning(identity:str,stage:str,approval:PlanningApproval):
 def set_planning_mode(identity:str,mode:ReviewMode):
     with lock:
         record,project=reviewed_job(identity,True)
-        if editing_service.busy() or any(j.get('status') in ('running','queued','revising') for j in jobs.values()):raise HTTPException(409,'请等待当前生成任务完成。')
+        if mode.auto_approve and production_queue:production_queue.ensure_capacity(record['owner_id'])
+        if not production_queue and (editing_service.busy() or any(j.get('status') in ('running','queued','revising') for j in jobs.values())):raise HTTPException(409,'请等待当前生成任务完成。')
         with project_lock(project):PlanningReview(project,auto_approve=mode.auto_approve)
         update_job(identity,auto_approve=mode.auto_approve)
         if mode.auto_approve:enqueue_resume(identity,project)
@@ -568,6 +624,9 @@ def list_sources():
     return {'results':service.library.search('',50)}
 
 
+
+from queue_api import register_queue
+register_queue(globals())
 
 if __name__=='__main__':
     import uvicorn

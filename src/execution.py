@@ -158,11 +158,15 @@ def render_command(arguments, project, directory, settings, timeout):
     image = settings.get("image", "code2video-worker:0.1")
     if not isinstance(image, str) or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._/:@-]*", image):
         raise ValueError("Invalid worker image")
-    cpus = float(settings.get("cpus", 2))
-    memory = str(settings.get("memory", "2g"))
+    cpus = float(os.getenv('C2V_RENDER_CPUS', settings.get("cpus", 2)))
+    memory = str(os.getenv('C2V_RENDER_MEMORY', settings.get("memory", "2g")))
+    memory_swap = str(os.getenv('C2V_RENDER_MEMORY_SWAP', memory))
+    cgroup_parent = os.getenv('C2V_RENDER_CGROUP_PARENT', '')
     pids = int(settings.get("pids_limit", 256))
     if not math.isfinite(cpus) or cpus <= 0 or not re.fullmatch(r"[1-9][0-9]*[kKmMgG]", memory) or pids < 16 or pids > 4096:
         raise ValueError("Invalid container resource limits")
+    if not re.fullmatch(r'[1-9][0-9]*[kKmMgG]', memory_swap) or (cgroup_parent and not re.fullmatch(r'[A-Za-z0-9_.-]+\.slice',cgroup_parent)):
+        raise ValueError('Invalid shared render resource limits')
     if "," in str(root):
         raise ValueError("Docker project mount path cannot contain commas")
     converted = []
@@ -178,7 +182,8 @@ def render_command(arguments, project, directory, settings, timeout):
         converted.append(value)
     identity = f"{os.getuid()}:{os.getgid()}" if os.name != "nt" and os.getuid() != 0 else "65532:65532"
     name = "c2v-render-" + uuid.uuid4().hex
-    command = [docker, "run", "--rm", "--pull=never", "--name", name, "--read-only", "--network=none", "--user", identity, "--cap-drop=ALL", "--security-opt=no-new-privileges", "--cpus", str(cpus), "--memory", memory, "--memory-swap", memory, "--pids-limit", str(pids), "--ulimit", "nofile=1024:1024", "--mount", f"type=bind,source={root},target=/project", "--workdir", _container_path(root, working)]
+    command = [docker, "run", "--rm", "--pull=never", "--name", name, "--read-only", "--network=none", "--user", identity, "--cap-drop=ALL", "--security-opt=no-new-privileges", "--cpus", str(cpus), "--memory", memory, "--memory-swap", memory_swap, "--pids-limit", str(pids), "--ulimit", "nofile=1024:1024", "--mount", f"type=bind,source={root},target=/project", "--workdir", _container_path(root, working)]
+    if cgroup_parent:command.extend(['--cgroup-parent',cgroup_parent])
     for key, value in environment.items():
         if key in ("PATH", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL"):
             continue

@@ -1,17 +1,19 @@
 .workspace-wordmark { gap: 9px; padding: 0; letter-spacing: 0; }
-.pelican-logo { display: block; width: 50px; height: 50px; flex: none; filter: drop-shadow(0 3px 4px #7370aa16); transition: transform .2s; }
+.pelican-logo { display: block; width: 52px; height: 52px; flex: none; filter: drop-shadow(0 2px 3px #61745112); transition: transform .2s; }
 .workspace-wordmark:hover .pelican-logo { transform: translateY(-2px) rotate(-3deg); }
 .pelican-wordmark { display: flex; flex-direction: column; gap: 3px; min-width: 0; color: #343753; }
 .pelican-wordmark strong { font-size: 19px; font-weight: 750; line-height: 1.4; letter-spacing: .4px; }
 .pelican-wordmark small { color: #76708f; font-size: 12px; font-weight: 600; line-height: 1.4; letter-spacing: 3.5px; }
 .sidebar { overflow-y: auto; scrollbar-width: thin; }
-.sidebar-note { padding: 13px 15px 18px; background: linear-gradient(145deg,#f4efff,#edf5ff 60%,#ebfaf8); border-color: #dddff0; overflow: hidden; }
+.sidebar-note { padding: 14px 15px 13px; border-radius: 15px; background: linear-gradient(135deg,#f3f0ff,#eef5fb 72%,#edf8f5); border-color: #e0dfee; overflow: hidden; }
 .sidebar-note:before,.sidebar-note:after { display: none; }
-.sidebar-pelican { width: 98px; height: 98px; margin: -1px 0 9px -7px; transform: rotate(-5deg); }
-.sidebar-pelican img { display: block; width: 100%; height: 100%; }
-.sidebar-note p { position: relative; z-index: 1; }
-.sidebar-note p span { color: #55516f; }
-.sidebar-note p em { background: linear-gradient(100deg,#6756c5,#3b99a7); background-clip: text; -webkit-text-fill-color: transparent; }
+.sidebar-note-top { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.sidebar-note-top>span:last-child { font-size: 18px; font-weight: 650; color: #55516f; letter-spacing: -.4px; }
+.sidebar-note .note-cube { width: 32px; height: 32px; border-radius: 10px; margin: 0; flex: none; box-shadow: 0 3px 8px #6155b823,inset 0 1px 1px #ffffff70; }
+.sidebar-note .note-cube>svg { width: 21px; height: 21px; }
+.sidebar-note p { position: relative; z-index: 1; gap: 1px; }
+.sidebar-note p>strong { font-size: 16px; line-height: 1.5; }
+.sidebar-note p>em { font-size: 27px; line-height: 1.25; background: linear-gradient(100deg,#6756c5,#3b99a7); background-clip: text; -webkit-text-fill-color: transparent; }
 .header-actions { gap: 10px; }
 .header-actions .header-balance,.header-actions .header-profile { display: inline-flex; align-items: center; min-height: 36px; border-radius: 999px; gap: 8px; padding: 4px 11px 4px 5px; font-size: 12px; white-space: nowrap; }
 .header-actions .header-balance { border: 1px solid #e7e8f1; background: #f9f9fd; color: #67677c; box-shadow: 0 1px 3px #36406f04; }
@@ -56,8 +58,7 @@
 @media(max-height:850px) and (min-width:901px) {
  .sidebar { padding-top: 22px; }
  .sidebar>.workspace-wordmark { margin-bottom: 24px; }
- .sidebar-pelican { width: 70px; height: 70px; margin-bottom: 6px; }
- .sidebar-note { padding-top: 9px; padding-bottom: 13px; }
+ .sidebar-note { padding-top: 12px; padding-bottom: 12px; }
 }
 @media(max-width:900px) {
  .sidebar .pelican-wordmark { display: none; }
@@ -88,6 +89,7 @@
 @media(prefers-reduced-motion:reduce) {
  .pelican-logo,.studio-select-trigger { transition: none; }
  .workspace-wordmark:hover .pelican-logo { transform: none; }
+ .sidebar-note .note-cube,.sidebar-note:hover .note-cube { transition: none; transform: none; }
 }
 
 .model-config-loading { padding: 0 26px 28px; color: #69748a; font-size: 13px; line-height: 1.8; }

@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel,Field
 from configuration import sanitize_error
 from video_project import write_json
+from storage_lifecycle import user_directory,records as storage_records
 from user_config import validate_public_endpoint
 from editing import MODES,inspect_media,validate_clips,analyze,render,review_commerce,selected_subtitles
 from model_gateway import ModelGateway
@@ -19,32 +20,39 @@ class EditPlan(BaseModel):
 
 class EditingService:
  def __init__(self,root,user,config,executor,lock,video_busy,private,job_id):
-  self.root=root;self.user=user;self.config=config;self.executor=executor;self.lock=lock;self.video_busy=video_busy;self.private=private;self.job_id=job_id;self.jobs={};self.router=APIRouter()
-  for path in root.glob('edit-*/editing_job.json'):
+  self.root=root;self.user=user;self.config=config;self.executor=executor;self.lock=lock;self.video_busy=video_busy;self.private=private;self.job_id=job_id;self.jobs={};self.router=APIRouter();self.queue=None;self.storage=None
+  for path in storage_records(root,'editing_job.json'):
    try:
-    job=json.loads(path.read_text())
+    job=json.loads(path.read_text());job['project']=str(path.parent)
     if job['status'] in ['uploading','analyzing','rendering']:
      job.update(status='failed',message='服务已重启，点击重试继续。');write_json(path,job)
     self.jobs[job['id']]=job
    except (ValueError,KeyError):pass
   self.routes()
  def busy(self):return any(j['status'] in ['uploading','analyzing','rendering'] for j in self.jobs.values())
- def directory(self,identity):return self.root/('edit-'+identity)
+ def directory(self,identity):return Path(self.jobs.get(identity,{}).get('project') or self.root/('edit-'+identity))
  def get(self,identity):
   job=self.jobs.get(identity)
   if not job or job['owner_id']!=self.user()['id']:raise HTTPException(404,'剪辑任务不存在。')
   return job
  def public(self,job):
-  result={k:v for k,v in job.items() if k!='owner_id'}
+  result={k:v for k,v in job.items() if k not in ('owner_id','project')}
   result['sources']=[{k:v for k,v in s.items() if k not in ['file','transcript','audio_peaks','scenes']} for s in result.get('sources',[])]
+  if self.queue:
+   state=self.queue.snapshot(job['id'])
+   if state:result['queue']=state
   return copy.deepcopy(result)
  def update(self,identity,**values):
   with self.lock:
-   job=self.jobs[identity];job.update(values,updated_at=time.time());write_json(self.directory(identity)/'editing_job.json',job)
+   job=self.jobs[identity];previous=job.get('status');job.update(values,updated_at=time.time())
+   if self.storage:self.storage.stamp(job,previous)
+   if self.queue:self.queue.progress(identity,job.get('stage','prepare'))
+   write_json(self.directory(identity)/'editing_job.json',job)
  def schedule(self,identity,config,action):
   self.executor.submit(self.work,identity,copy.deepcopy(config),action)
  def work(self,identity,config,action):
   job=self.jobs[identity];directory=self.directory(identity)
+  self.update(identity,status='analyzing' if action=='analyze' else 'rendering')
   def event(stage,message):self.update(identity,stage=stage,message=message)
   try:
    for role in ['text','vision']:
@@ -69,6 +77,8 @@ class EditingService:
    safe=str(error) if isinstance(error,ValueError) and 'Traceback' not in str(error) and '/data/' not in str(error) and len(str(error))<400 else '本次素材处理未完成，请保留任务并重试；持续失败时请检查模型配置或换用标准 MP4 素材。'
    self.update(identity,status='failed',message=sanitize_error(safe,config),failed_action=action)
  def available(self):
+  if self.queue:
+   self.queue.ensure_capacity(self.user()['id']);return
   if self.video_busy() or self.busy():raise HTTPException(409,'当前已有任务在制作，完成后即可继续。')
  def ready(self):
   config=self.config()
@@ -86,10 +96,10 @@ class EditingService:
    if not 5<=len(prompt.strip())<=3000:raise HTTPException(400,'请填写5至3000字的剪辑要求。')
    if not (30 if mode=='product' else 5)<=target_duration<=120:raise HTTPException(400,'普通剪辑目标为5至120秒；直播带货切片为30至120秒。')
    if not 1<=len(files)<=3:raise HTTPException(400,'每次可上传1至3个视频。')
-   config=self.ready();identity=self.job_id() or uuid.uuid4().hex[:12];directory=self.directory(identity)
+   config=self.ready();identity=self.job_id() or uuid.uuid4().hex[:12];directory=user_directory(self.root,'edit',identity,self.user()['id'])
    with self.lock:
     self.available();directory.mkdir(parents=True)
-    self.jobs[identity]={'id':identity,'owner_id':self.user()['id'],'prompt':prompt.strip(),'mode':mode,'target_duration':target_duration,'orientation':orientation,'captions':captions,'status':'uploading','stage':'upload','created_at':time.time(),'sources':[],'version':0}
+    self.jobs[identity]={'id':identity,'owner_id':self.user()['id'],'project':str(directory),'prompt':prompt.strip(),'mode':mode,'target_duration':target_duration,'orientation':orientation,'captions':captions,'status':'uploading','stage':'upload','created_at':time.time(),'sources':[],'version':0}
    try:
     total=0;sources=[]
     for i,upload in enumerate(files):
@@ -136,7 +146,7 @@ class EditingService:
   def retry(identity:str):
    with self.lock:
     job=self.get(identity)
-    if job['status']!='failed':raise HTTPException(409,'仅未完成的任务可以重试。')
+    if job['status'] not in ('failed','cancelled'):raise HTTPException(409,'仅未完成的任务可以重试。')
     self.available();config=self.ready();action=job.get('failed_action','analyze')
     self.update(identity,status='analyzing' if action=='analyze' else 'rendering',stage=action,message='正在重试')
     self.schedule(identity,config,action);return {'id':identity}

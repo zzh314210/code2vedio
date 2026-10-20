@@ -144,6 +144,10 @@ func (s *Server) prepareJob(w http.ResponseWriter, r *http.Request, c PersonalCo
 			AutoApprove   bool            `json:"auto_approve"`
 			ReferenceURLs []string        `json:"reference_urls"`
 			SourceIDs     []string        `json:"source_ids"`
+			BGMEnabled    bool            `json:"bgm_enabled"`
+			BGMTrackID    string          `json:"bgm_track_id"`
+			BGMUploadID   string          `json:"bgm_upload_id"`
+			BGMVolume     *float64        `json:"bgm_volume"`
 			Config        *PersonalConfig `json:"config"`
 		}
 		if !decode(w, r, &d) {
@@ -160,6 +164,12 @@ func (s *Server) prepareJob(w http.ResponseWriter, r *http.Request, c PersonalCo
 		}
 		sourceIDs, _ := json.Marshal(d.SourceIDs)
 		form := url.Values{"template_id": {d.TemplateID}, "prompt": {d.Prompt}, "style": {d.Style}, "duration": {strconv.Itoa(d.Duration)}, "orientation": {d.Orientation}, "auto_approve": {strconv.FormatBool(d.AutoApprove)}, "reference_urls": {strings.Join(d.ReferenceURLs, "\n")}, "source_ids": {string(sourceIDs)}}
+		form.Set("bgm_enabled", strconv.FormatBool(d.BGMEnabled))
+		form.Set("bgm_track_id", d.BGMTrackID)
+		form.Set("bgm_upload_id", d.BGMUploadID)
+		if d.BGMVolume != nil {
+			form.Set("bgm_volume", strconv.FormatFloat(*d.BGMVolume, 'f', -1, 64))
+		}
 		if len(d.SourceIDs) == 0 {
 			form.Set("source_ids", "[]")
 		}
@@ -213,5 +223,8 @@ type stringReadCloser struct{ *strings.Reader }
 func (s stringReadCloser) Close() error        { return nil }
 func readCloser(value string) stringReadCloser { return stringReadCloser{strings.NewReader(value)} }
 func bearerAllowed(path string) bool {
+	if path == "/api/music/uploads" || strings.HasPrefix(path, "/api/music/uploads/") {
+		return true
+	}
 	return path == "/api/usage" || path == "/api/billing" || path == "/api/wallet" || path == "/api/wallet/ledger" || path == "/api/edits" || strings.HasPrefix(path, "/api/edits/") || path == "/api/config" || path == "/api/config/models" || path == "/api/jobs" || strings.HasPrefix(path, "/api/jobs/") || path == "/api/styles" || path == "/api/sources" || strings.HasPrefix(path, "/api/sources/") || path == "/api/voices" || strings.HasPrefix(path, "/api/voices/")
 }

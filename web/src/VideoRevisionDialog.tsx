@@ -1,3 +1,4 @@
+import {QueueStatus,type QueueState} from './QueueStatus';
 import {useEffect,useRef,useState} from 'react';
 import {ArrowRight,Check,LoaderCircle,ScanEye,Sparkles} from 'lucide-react';
 import {Dialog,DialogContent,DialogDescription,DialogHeader,DialogTitle} from '@/components/ui/dialog';
@@ -8,7 +9,7 @@ import './revision.css';
 
 type Film={id:string;prompt:string;revision_number?:number};
 type Suggestion={title:string;reason:string;feedback:string};
-type Advice={status:'idle'|'queued'|'running'|'ready'|'failed';summary?:string;suggestions?:Suggestion[];message?:string};
+type Advice={status:'idle'|'queued'|'running'|'ready'|'failed';summary?:string;suggestions?:Suggestion[];message?:string;queue?:QueueState};
 export default function VideoRevisionDialog({job,onClose,onCreated}:{job:Film|null;onClose:()=>void;onCreated:(id:string)=>void}){
  const[feedback,setFeedback]=useState(''),[confirmPlan,setConfirmPlan]=useState(true),[busy,setBusy]=useState(false),[reviewBusy,setReviewBusy]=useState(false),[error,setError]=useState(''),[advice,setAdvice]=useState<Advice>({status:'idle'}),[used,setUsed]=useState<number[]>([]);
  const requestId=useRef(crypto.randomUUID()),currentJob=useRef(job?.id);currentJob.current=job?.id;
@@ -27,7 +28,8 @@ export default function VideoRevisionDialog({job,onClose,onCreated}:{job:Film|nu
   <div className="revision-editor-label"><label htmlFor="film-revision-feedback">想修改哪里？</label><Button variant="outline" onClick={review} disabled={checking||reviewBusy||busy}>{checking||reviewBusy?<LoaderCircle size={15} className="spin"/>:<ScanEye size={15}/>}AI 帮我看看</Button></div>
   <Textarea id="film-revision-feedback" value={feedback} onChange={e=>change(e.target.value)} maxLength={6000} disabled={busy} placeholder="例如：开头缩短一点；第二段先用动画解释，再出现公式；结尾留两秒让我回忆答案。" rows={5}/>
   <div className="revision-input-note"><span>AI 建议会使用已配置的视觉模型；点击后才开始审核。</span><span>{feedback.length}/6000</span></div>
-  {checking&&<div className="revision-review-state" role="status"><LoaderCircle size={17} className="spin"/><span>正在查看画面与分镜，通常需要几十秒。可以先填写自己的意见。</span></div>}
+  {advice.status==='queued'&&<QueueStatus queue={advice.queue}/>}
+  {advice.status==='running'&&<div className="revision-review-state" role="status"><LoaderCircle size={17} className="spin"/><span>正在查看画面与分镜，通常需要几十秒。可以先填写自己的意见。</span></div>}
   {advice.status==='failed'&&<p className="revision-review-error" role="status">{advice.message} 你也可以直接填写修改要求。</p>}
   {advice.status==='ready'&&<section className="revision-advice" aria-label="AI 修改建议"><p>{advice.summary}</p>{advice.suggestions?.map((suggestion,index)=><article key={index}><div><strong>{suggestion.title}</strong><p>{suggestion.reason}</p></div><Button variant="outline" disabled={used.includes(index)||busy} onClick={()=>apply(suggestion,index)}>{used.includes(index)?<><Check size={14}/>已填入</>:<>采用建议<ArrowRight size={14}/></>}</Button></article>)}</section>}
   <label className="revision-confirm"><input type="checkbox" checked={confirmPlan} onChange={e=>{setConfirmPlan(e.target.checked);requestId.current=crypto.randomUUID()}} disabled={busy}/><span><strong>制作前，先让我确认修改后的分镜</strong><small>可以继续微调旁白与画面描述，满意后再开始制作。</small></span></label>

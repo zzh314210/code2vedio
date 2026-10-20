@@ -81,7 +81,31 @@ curl https://vedio.myaihub.asia/api/jobs \
 - `POST /api/jobs/{id}/retry`：重试失败任务。
 - `GET /api/jobs/{id}/usage`：平台模型的逐次调用用量，缺少上游 usage 的调用明确标记未计量；自备 API 返回空记录，不参与本站计量。
 
-HTTP 401：凭据无效；403：权限不足；404：资源不存在或不属于当前用户；409：任务忙或文档版本冲突；429：请求频率限制。服务器当前串行渲染，避免同时抢占资源；409 时应稍后重试。
+HTTP 401：凭据无效；403：权限不足；404：资源不存在或不属于当前用户；409：当前任务状态或文档版本冲突；429：请求频率限制或等待队列已满。服务器按用户公平轮流制作，其他任务正在运行时仍可提交。
+
+## 排队与保存时间
+
+创建任务成功后通常先进入 `queued`。轮询响应中的 `queue` 包含 `ahead`（前面任务数）、`position`（等待位置）、`wait_minutes`（预计等待分钟区间）、`remaining_minutes`（本次步骤预计时长）、`active_stage`（当前制作阶段）和 `waiting_for`。当 `waiting_for=memory` 时等待资源释放，`wait_minutes=null`，不能给出准确开始时间。
+
+`POST /api/jobs/{id}/cancel` 和 `POST /api/edits/{id}/cancel` 取消本人的等待任务，状态变为 `cancelled`；已经运行则返回 409。取消尚未开始的步骤不会产生该步骤的模型费用；之前已经完成的调用按实际用量计费。每用户最多 5 条等待任务，全站最多 30 条。服务重启后恢复未开始任务，已运行的中断任务由用户检查后重试。
+
+`expires_at` 是 UTC Unix 秒时间戳。用户作品完成后保存 24 小时，包含素材和中间文件；到期后状态为 `expired`，下载不可用。等待人工确认的内容也保存 24 小时，确认后重新计算下一阶段保存期；排队或制作期间保护文件。公开样片永久保留。余额和模型账单不随视频清理。
+
+## 背景音乐
+
+`GET /bgm/catalog.json` 是无需认证的本地精选曲库，含试听地址、来源与署名。任务 JSON 和 multipart 均支持 `bgm_enabled`、`bgm_track_id`、`bgm_upload_id`、`bgm_volume`（0–0.5，默认 0.16）。启用时在曲库 ID 和上传 ID 中二选一，例如：
+
+```json
+{"prompt":"用图解说明复利","style":"studio_noir","duration":30,"auto_approve":true,"bgm_enabled":true,"bgm_track_id":"easy-lemon","bgm_volume":0.16}
+```
+
+- `GET /api/music/uploads`：自己的已上传音乐。
+- `POST /api/music/uploads`：multipart 的 `file` 字段，支持 MP3/WAV/M4A/OGG/FLAC/AAC，最多 30 MB、1 秒至 15 分钟；返回 `id` 与 `audio_url`。每人最多 20 首，保存 24 小时。
+- `GET /api/music/uploads/{id}/audio`：私有试听，支持 Range。
+- `DELETE /api/music/uploads/{id}`：删除自己的上传；已经提交的视频使用独立副本。
+- `GET /api/jobs/{id}/music-credit`：有署名要求时下载音乐署名文本，随作品发布说明一起使用。
+
+音乐从零秒播放，不足时循环到片尾；旁白出现时自动降低音乐音量。曲库和混音均在本地完成，不消耗模型额度。API 调用密钥可管理自己的音乐和取消自己的等待任务，不能访问管理员队列接口。
 
 ## 修改成片与 AI 建议
 
@@ -132,7 +156,7 @@ curl https://vedio.myaihub.asia/api/edits \
   -F 'files=@livestream-fragment.mp4'
 ```
 
-返回202及 `id`。每5秒轮询 `GET /api/edits/{id}`；`GET /api/edits` 返回自己的剪辑历史。状态依次为 `analyzing` → `awaiting_review` → `rendering` → `complete`；`failed` 可用 `POST /api/edits/{id}/retry` 重试。
+返回202及 `id`。每5秒轮询 `GET /api/edits/{id}`；`GET /api/edits` 返回自己的剪辑历史。状态依次为 `queued` → `analyzing` → `awaiting_review` → `queued` → `rendering` → `complete`；`failed` 或 `cancelled` 可用 `POST /api/edits/{id}/retry` 重试。
 
 - 模式：`highlights`（精华）、`product`（直播带货）、`gaming`（游戏高光）、`documentary`（叙事纪实）。
 - 目标：普通剪辑5至120秒；带货30至120秒，成片也强制30至120秒。

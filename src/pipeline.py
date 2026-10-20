@@ -832,6 +832,12 @@ class VideoPipeline:
                 video, audio = compose_media(video, audio, self.output / "montage.mp4",
                                             self.output / "mixed.wav", duration,
                                             montage_settings, self.materials["sources"])
+            from background_music import compose_background_music
+            music = self.config.get('background_music', {})
+            if music.get('enabled'):
+                self.event('compose', 'running', '正在合成背景音乐，自动循环并降低旁白期间的音量')
+                audio = compose_background_music(self.project, audio, self.output, duration, music)
+                self.manifest['background_music'] = music
             mux(video, audio, self.output / "subtitles.srt", final, duration, self.config["video"].get("subtitle_language", "zho"))
             details = probe(final)
             if not {"video", "audio", "subtitle"}.issubset({stream["type"] for stream in details["streams"]}):

@@ -82,7 +82,7 @@ export default function AuthGate(){
    <App key={workspaceKey} user={user} onUserChange={setUser} onLogout={logout} onLogin={showLogin}/>
   </div>
   {open&&<main className="auth-page"><section className="auth-story">
-   <a className="wordmark workspace-wordmark" href="#create" onClick={e=>{e.preventDefault();closeLogin()}}><img className="pelican-logo" src="/brand/pelican-cycle.svg" alt="" width="50" height="50"/><span className="pelican-wordmark"><strong>鹈鹕先生</strong><small>的视频站</small></span></a>
+   <a className="wordmark workspace-wordmark" href="#create" onClick={e=>{e.preventDefault();closeLogin()}}><img className="pelican-logo" src="/brand/pelican-cycle.svg?v=coast-2" alt="" width="50" height="50"/><span className="pelican-wordmark"><strong>鹈鹕先生</strong><small>的视频站</small></span></a>
    <div><span className="eyebrow">从想法到作品</span><h1>把内容讲清楚。<br/>把灵感留下来。</h1><p>策划、分镜、配音与动画，在一个属于你的空间里完成。</p><div className="auth-illustration" aria-hidden="true"><span><Layers3 size={46}/></span><i/><span><Film size={46}/></span></div></div>
    <p className="auth-trust"><ShieldCheck size={17}/>独立作品空间 · 个人 API 配置</p>
   </section><section className="auth-card">

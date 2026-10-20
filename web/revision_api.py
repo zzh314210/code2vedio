@@ -17,6 +17,7 @@ from model_gateway import ModelGateway
 from planning_review import PlanningReview, version_of
 from user_config import validate_public_endpoint
 from video_project import copy_project_inputs, write_json
+from storage_lifecycle import user_directory
 
 
 class FilmRevision(BaseModel):
@@ -81,17 +82,22 @@ class RevisionAPI:
         if not path.is_file():
             return {'status': 'idle'}
         result = json.loads(path.read_text())
-        if result['status'] in {'queued', 'running'} and identity not in self.advice_running:
+        if result['status'] in {'queued', 'running'} and identity not in self.advice_running and not (self.env.get('production_queue') and self.env['production_queue'].has_pending(identity+':advice')):
             result = {'status': 'failed', 'message': '上次审核已中断，请再次点击 AI 帮我看看。'}
             write_json(path, result)
+        if self.env.get('production_queue'):
+            queue_state=self.env['production_queue'].snapshot(identity+':advice')
+            if queue_state:result['queue']=queue_state
         return result
 
     def request_advice(self, identity: str):
         record, project = self.completed(identity)
         with self.env['lock']:
-            if identity in self.advice_running:
+            if identity in self.advice_running or (self.env.get('production_queue') and self.env['production_queue'].has_pending(identity+':advice')):
                 return self.advice(identity)
-            if len(self.advice_running) >= 3:
+            if self.env.get('production_queue'):
+                self.env['production_queue'].ensure_capacity(record['owner_id'])
+            elif len(self.advice_running) >= 3:
                 raise HTTPException(409, 'AI 正在查看其他作品，请稍后再试。')
             runtime = self.env['job_settings'](record)
             self.advice_running.add(identity)
@@ -173,11 +179,12 @@ class RevisionAPI:
             for item in env['jobs'].values():
                 if item.get('revision_parent') == identity and item.get('owner_id') == parent['owner_id'] and item.get('revision_request_id') == edit.request_id:
                     return {'id': item['id'], 'status': item['status'], 'parent_id': identity}
-            if env['editing_service'].busy() or any(j.get('status') in {'queued', 'running', 'revising'} for j in env['jobs'].values()):
+            if env.get('production_queue'):env['production_queue'].ensure_capacity(parent['owner_id'])
+            if not env.get('production_queue') and (env['editing_service'].busy() or any(j.get('status') in {'queued', 'running', 'revising'} for j in env['jobs'].values())):
                 raise HTTPException(409, '请等待当前制作任务完成，再生成修改版。')
             runtime = env['job_settings'](parent, json.loads((source / 'output/manifest.json').read_text())['config'])
             child = env['current_job_id'].get() or uuid.uuid4().hex[:12]
-            project = env['STUDIO_PROJECTS'] / f'studio-{child}'
+            project = user_directory(env['STUDIO_PROJECTS'],'studio',child,parent['owner_id'])
             project.mkdir(parents=True, exist_ok=False)
             root = parent.get('revision_root', identity)
             number = max([1] + [j.get('revision_number', 1) for j in env['jobs'].values() if j.get('revision_root', j['id']) == root]) + 1

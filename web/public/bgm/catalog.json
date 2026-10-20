@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "tracks": [
+    {
+      "id": "monkeys",
+      "title": "轻快俏皮",
+      "original_title": "Monkeys Spinning Monkeys",
+      "description": "拨弦与长笛，适合趣味讲解、轻松小故事。",
+      "mood": "活泼",
+      "artist": "Kevin MacLeod",
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "source_url": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1400011",
+      "download_url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Monkeys%20Spinning%20Monkeys.mp3",
+      "credit": "\"Monkeys Spinning Monkeys\" — Kevin MacLeod (incompetech.com)\nLicensed under Creative Commons: By Attribution 4.0\nhttps://creativecommons.org/licenses/by/4.0/\n本视频对音乐作了音量调整、截取或循环。",
+      "audio_url": "/bgm/monkeys.m4a",
+      "kind": "preset",
+      "duration": 125.1,
+      "sha256": "942d2144b3803131644069c6d4fff11d5d3ca63bd347e6c1da368d701c8b00da"
+    },
+    {
+      "id": "sneaky",
+      "title": "悬念小剧场",
+      "original_title": "Sneaky Snitch",
+      "description": "轻巧的悬疑感，适合反转、趣味推理。",
+      "mood": "诙谐",
+      "artist": "Kevin MacLeod",
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "source_url": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100772",
+      "download_url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Sneaky%20Snitch.mp3",
+      "credit": "\"Sneaky Snitch\" — Kevin MacLeod (incompetech.com)\nLicensed under Creative Commons: By Attribution 4.0\nhttps://creativecommons.org/licenses/by/4.0/\n本视频对音乐作了音量调整、截取或循环。",
+      "audio_url": "/bgm/sneaky.m4a",
+      "kind": "preset",
+      "duration": 136.7,
+      "sha256": "81191d5d79726e31f06c98e1146e9a27a171fcaf4af4801576d0825bd69398f2"
+    },
+    {
+      "id": "carefree",
+      "title": "明亮日常",
+      "original_title": "Carefree",
+      "description": "尤克里里的轻快节奏，适合生活分享和产品介绍。",
+      "mood": "明快",
+      "artist": "Kevin MacLeod",
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "source_url": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1400037",
+      "download_url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Carefree.mp3",
+      "credit": "\"Carefree\" — Kevin MacLeod (incompetech.com)\nLicensed under Creative Commons: By Attribution 4.0\nhttps://creativecommons.org/licenses/by/4.0/\n本视频对音乐作了音量调整、截取或循环。",
+      "audio_url": "/bgm/carefree.m4a",
+      "kind": "preset",
+      "duration": 205.2,
+      "sha256": "a86c26a2e7754a77ac9d9b7a6439b60f18d581ca832b4333362805162a0ab4f0"
+    },
+    {
+      "id": "easy-lemon",
+      "title": "轻松叙事",
+      "original_title": "Easy Lemon",
+      "description": "柔和、舒展的节奏，适合知识讲解和学习复盘。",
+      "mood": "舒缓",
+      "artist": "Kevin MacLeod",
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "source_url": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1200076",
+      "download_url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Easy%20Lemon.mp3",
+      "credit": "\"Easy Lemon\" — Kevin MacLeod (incompetech.com)\nLicensed under Creative Commons: By Attribution 4.0\nhttps://creativecommons.org/licenses/by/4.0/\n本视频对音乐作了音量调整、截取或循环。",
+      "audio_url": "/bgm/easy-lemon.m4a",
+      "kind": "preset",
+      "duration": 126.4,
+      "sha256": "475e684bf6ca35fe8c4496ac3aa0c5e90d506d2739fd1e509889062083586057"
+    }
+  ]
+}

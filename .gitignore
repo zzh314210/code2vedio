@@ -110,3 +110,9 @@ config.*.local.json
 
 # Reviewed public samples are versioned with their provenance manifest.
 !web/public/showcase/*.mp4
+
+# Locally hosted music with reviewed redistribution licenses and attribution.
+!web/public/bgm/*.m4a
+
+# Shared task queue (encrypted payloads and private scheduling metadata)
+/.runtime/

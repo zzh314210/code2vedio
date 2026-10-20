@@ -7,10 +7,10 @@
 - `code2vedio`：Go，`api/bin/frame-api`，127.0.0.1:7860，经Nginx HTTPS。
 - `code2vedio-worker`：Python，`private/worker.sock`，仅接受Go签名用户/任务。
 - `web/dist`：已构建网页与经过验收的公开样片。
-- Docker `code2video-worker:0.1`：Manim0.21、Pillow12.1、FFmpeg、Noto CJK；1CPU/1GiB、非root、禁网、只读根、单项目挂载。编码队列显式有界。
+- Docker `code2video-worker:0.1`：Manim0.21、Pillow12.1、FFmpeg、Noto CJK；非root、禁网、只读根、单项目挂载。整个项目共用 2.5 核 / 2 GiB 物理内存 / 4 GiB 额外 Swap 上限，包含 Docker 渲染；编码队列显式有界。
 - `.venv-editing` 与 `private/models`：固定版本 CPU/int8 Whisper、PySceneDetect、OpenTimelineIO，无需额外收费语音接口。
 
-后台任务在服务重启时会中断，必须先检查运行状态；待人工确认的任务可以继续。不要为了发布而终止用户正在制作的任务。
+队列、管理员调序、资源与 24 小时文件保存见 [QUEUE_AND_STORAGE.md](QUEUE_AND_STORAGE.md)。尚未开始的任务可在重启后恢复，运行中的任务不能自动重放；必须先检查运行状态，不要为了发布而终止用户正在制作的任务。公开样片与默认资产永久保存。
 
 ## 构建与发布
 
@@ -28,7 +28,7 @@ npm --prefix web run build -- --outDir ../.tmp/release-web --emptyOutDir
 
 账号数据库与加密密钥位于 `private`，必须一起备份；SQLite使用backup API。作品在 `video_projects`，个人资料库在 `private/libraries`。用户密钥不进入前端、Git或公开样片。回滚时恢复同一份二进制/前端/代码快照，然后重启两项服务；若修改了用户数据格式，先检查兼容性。本次新增任务类型未改变旧作品归属。
 
-发布前检查点为 `88945135ab2f75a265b8c296c862fb7b40df5b6d`。具体本次备份位置及部署结果见 `RELEASE_ACCEPTANCE.md`。
+最新一轮背景音乐、队列与资源部署结果见 [MUSIC_QUEUE_ACCEPTANCE.md](MUSIC_QUEUE_ACCEPTANCE.md)，发布前版本 `3f5b830fcd7499c53772ee9e40e3d3bbca9997bf`。较早的视频模板验收见 `RELEASE_ACCEPTANCE.md`。
 
 ## 隔离验收站
 
