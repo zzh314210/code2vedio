@@ -30,6 +30,8 @@ npm --prefix web run build -- --outDir ../.tmp/release-web --emptyOutDir
 
 最新一轮背景音乐、队列与资源部署结果见 [MUSIC_QUEUE_ACCEPTANCE.md](MUSIC_QUEUE_ACCEPTANCE.md)，发布前版本 `3f5b830fcd7499c53772ee9e40e3d3bbca9997bf`。较早的视频模板验收见 `RELEASE_ACCEPTANCE.md`。
 
+左下角骑车鹈鹕的前端更新与验收见 [PELICAN_RIDE_ACCEPTANCE.md](PELICAN_RIDE_ACCEPTANCE.md)。
+
 ## 隔离验收站
 
 https://vedio.myaihub.asia:8443/ 使用独立 `.tmp/staging` 账号、配置和作品，Cookie为 `frame_preview_session`。`code2vedio-preview-api` / `code2vedio-preview-worker` 是临时systemd单元，不随服务器重启恢复，不能代替正式站。预览关闭时仅操作这两个单元和独立Nginx8443配置，不影响正式443。

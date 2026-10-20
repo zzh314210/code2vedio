@@ -9,5 +9,8 @@ the reference animation so the standalone artwork has no JavaScript dependency.
 - `pelican-profile.svg`: the same head and neck, cropped for small browser icons.
 - Apple/app PNGs use the full rider; the ICO uses the profile for small-size clarity.
 
-The lower-left slogan uses the existing abstract Layers icon, not a pelican.
+The lower-left `PelicanRide` component animates the same reference rider. Its
+pedals, legs, wheels and scarf follow the reference animation; it supports speed
+control, pause and a locally synthesized bicycle bell. The caption is
+“和鹈鹕先生一起，把想法变成看得见的视频”.
 No external image service or new third-party artwork is used.

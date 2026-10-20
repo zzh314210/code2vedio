@@ -1,0 +1,88 @@
+.sidebar-ride {
+  position: relative;
+  flex: none;
+  margin-top: auto;
+  padding: 0 9px 13px;
+  border: 1px solid #e6e8ee;
+  border-radius: 19px;
+  background: radial-gradient(ellipse at 50% 22%, #fff9e9 0, #fafbf9 49%, #f1f3fb 100%);
+  box-shadow: inset 0 1px 0 #fff, 0 3px 12px #4e5d7310;
+  text-align: center;
+}
+.pelican-ride-scene {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 133px;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  -webkit-tap-highlight-color: transparent;
+}
+.pelican-ride-art { display: block; width: 100%; height: 100%; overflow: visible; }
+.pelican-ride-play {
+  position: absolute;
+  top: 6px;
+  right: -3px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid #e0e6e8;
+  border-radius: 50%;
+  background: #ffffffd9;
+  color: #617b75;
+  opacity: 0;
+  transition: opacity .18s;
+}
+.pelican-ride-scene:hover .pelican-ride-play,
+.pelican-ride-scene:focus-visible .pelican-ride-play { opacity: 1; }
+.pelican-ride-scene:has(.lucide-play) .pelican-ride-play { opacity: 1; }
+.pelican-ride-controls { display: flex; justify-content: center; gap: 7px; margin: 2px 0 11px; }
+.pelican-ride-controls button {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  flex: 1;
+  max-width: 70px;
+  padding: 4px 7px;
+  border: 1px solid #dfe5e9;
+  border-radius: 9px;
+  background: #ffffffb8;
+  box-shadow: 0 1px 2px #35485c05;
+  color: #66757d;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  transition: background .18s, border-color .18s, color .18s, transform .18s;
+}
+.pelican-ride-controls button:hover { color: #39776c; border-color: #b0cdc4; background: #f2faf6; transform: translateY(-1px); }
+.pelican-ride-controls button:active { transform: translateY(1px); }
+.pelican-ride-controls button[aria-pressed=true] { color: #2f7161; border-color: #a8cbbb; background: #e4f2e9; box-shadow: inset 0 1px 2px #3c7e5110; }
+.sidebar-ride[data-ringing=true] .pelican-ride-controls button:last-child { color: #9c692c; border-color: #e1c591; background: #fff5df; }
+.pelican-ride-caption { line-height: 1.5; }
+.pelican-ride-caption>span { display: block; margin-bottom: 3px; color: #737b88; font-size: 11px; letter-spacing: .2px; }
+.pelican-ride-caption strong { display: block; color: #4c576c; font-size: 16px; font-weight: 700; letter-spacing: .2px; }
+.pelican-ride-caption em { font-style: normal; color: #456c75; background: linear-gradient(100deg, #6272a1, #378578); background-clip: text; -webkit-text-fill-color: transparent; }
+.pelican-ride-ding { position: absolute; top: 14px; right: 0; color: #ac7438; font-size: 11px; font-weight: 650; opacity: 0; pointer-events: none; transform: translateY(5px); }
+.pelican-ride-ding>span { display: inline-block; margin-left: 3px; color: #d29447; font-size: 15px; transform: rotate(12deg); }
+.sidebar-ride[data-ringing=true] .pelican-ride-ding { animation: pelican-ding .9s ease-out both; }
+.sidebar-ride[data-ringing=true] .lucide-bell { animation: pelican-bell .45s ease-in-out; transform-origin: 50% 10%; }
+@keyframes pelican-ding { 0% { opacity: 0; transform: translateY(5px); } 18%, 65% { opacity: 1; } 100% { opacity: 0; transform: translateY(-7px); } }
+@keyframes pelican-bell { 0%, 100% { transform: rotate(0); } 20%, 60% { transform: rotate(17deg); } 40%, 80% { transform: rotate(-17deg); } }
+@media (max-height: 850px) and (min-width: 901px) {
+  .sidebar-ride { padding-bottom: 11px; }
+  .pelican-ride-scene { height: 108px; }
+  .pelican-ride-controls { margin-bottom: 8px; }
+  .pelican-ride-caption strong { font-size: 15px; }
+}
+@media (max-width: 900px) { .sidebar-ride { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .pelican-ride-controls button, .pelican-ride-play { transition: none; }
+  .pelican-ride-controls button:hover, .pelican-ride-controls button:active { transform: none; }
+  .sidebar-ride[data-ringing=true] .pelican-ride-ding { opacity: 1; transform: none; }
+}
