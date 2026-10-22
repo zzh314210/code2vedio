@@ -38,6 +38,21 @@ class StructuredOutputError(ValueError):
         self.validation_error = validation_error
 
 
+class OutputLimitError(ValueError):
+    """The provider exhausted the shared reasoning/answer output budget."""
+    def __init__(self, limit, usage=None):
+        raw = usage if isinstance(usage, dict) else (usage.model_dump() if hasattr(usage, 'model_dump') else vars(usage) if usage is not None else {})
+        details = raw.get('completion_tokens_details') or raw.get('output_tokens_details') or {}
+        reasoning = details.get('reasoning_tokens')
+        total = raw.get('completion_tokens', raw.get('output_tokens'))
+        thinking_only = isinstance(total, int) and total > 0 and reasoning == total
+        message = f'模型达到单次输出上限（{limit:,} Token，含思考与正文），未返回完整内容。'
+        if thinking_only:
+            message += '本次输出额度全部用于思考，没有返回正文。'
+        message += '请提高模型配置中的「最大输出长度」后重试；这是输出额度限制，并非上下文长度不足。'
+        super().__init__(message)
+
+
 class ModelGateway:
     def __init__(self, settings, role="text", on_request=None):
         validate_model(settings, role)
@@ -124,7 +139,8 @@ class ModelGateway:
             provider_usage = raw.get('usage', {})
             incoming_native = sum(provider_usage.get(k, 0) for k in ('input_tokens','cache_read_input_tokens','cache_creation_input_tokens'))
             usage = SimpleNamespace(**{**provider_usage,'input_tokens':incoming_native,'input_tokens_details':{'cached_tokens':provider_usage.get('cache_read_input_tokens',0)}})
-            self.meter(usage, SimpleNamespace(id=raw.get('id'), model=raw.get('model')))
+            self.meter(usage, SimpleNamespace(id=raw.get('id'), model=raw.get('model')), 'IncompleteOutput' if raw.get('stop_reason') != 'end_turn' else '')
+            if raw.get('stop_reason') == 'max_tokens': raise OutputLimitError(limit, usage)
             if raw.get('stop_reason') != 'end_turn': raise ValueError('Claude 输出未完整结束')
             text = ''.join(item.get('text', '') for item in raw.get('content', []) if item.get('type') == 'text')
             incoming, outgoing = incoming_native, raw.get('usage', {}).get('output_tokens', 0)
@@ -135,9 +151,11 @@ class ModelGateway:
                 model=self.settings["model"], input=[{"role": "user", "content": content}],
                 max_output_tokens=limit, extra_body=extra, store=False,
             )
-            self.meter(response.usage,response)
+            self.meter(response.usage,response, 'IncompleteOutput' if response.status == 'incomplete' else '')
             if response.status == "incomplete":
-                raise ValueError("Responses 返回 incomplete；请提高 text.max_tokens 或减小课程长度")
+                if getattr(getattr(response, 'incomplete_details', None), 'reason', None) == 'max_output_tokens':
+                    raise OutputLimitError(limit, response.usage)
+                raise ValueError('模型输出未完整结束，请检查服务商返回的限制后重试。')
             text = response.output_text
             usage = response.usage
             incoming = getattr(usage, "input_tokens", 0) or 0
@@ -171,8 +189,10 @@ class ModelGateway:
                         stream_response_id = getattr(chunk, "id", None) or stream_response_id
                         stream_model = getattr(chunk, "model", None) or stream_model
                         elapsed = time.monotonic() - started
-                        if elapsed > float(self.settings.get("total_timeout", 600)):
-                            raise TimeoutError("Model stream exceeded total_timeout")
+                        # Higher reasoning budgets need enough wall time as well.
+                        default_timeout = max(600, ((limit + 23999) // 24000) * 600)
+                        if elapsed > float(self.settings.get("total_timeout", default_timeout)):
+                            raise TimeoutError('模型生成超时，未返回完整内容，请稍后重试。')
                         if chunk.usage is not None:
                             usage = chunk.usage
                         for choice in chunk.choices:
@@ -192,11 +212,15 @@ class ModelGateway:
                     self.meter(usage, SimpleNamespace(id=stream_response_id, model=stream_model),stream_error or ("IncompleteOutput" if finish!="stop" else ""))
                     response.close()
                 if finish != "stop":
-                    raise ValueError(f"Model stream did not complete: {finish}")
+                    if finish == 'length': raise OutputLimitError(limit, usage)
+                    if finish == 'content_filter': raise ValueError('模型服务拦截了此次输出，请调整输入内容后重试。')
+                    raise ValueError('模型连接提前结束，未返回完整内容，请稍后重试。')
                 response = SimpleNamespace(choices=[SimpleNamespace(finish_reason=finish, message=SimpleNamespace(content="".join(fragments)))], usage=usage)
-            self.meter(response.usage,response)
-            if not response.choices or response.choices[0].finish_reason in ("length", "content_filter"):
-                raise ValueError("Chat Completions 输出被截断/过滤；请提高 max_tokens 或检查输入")
+            finish = response.choices[0].finish_reason if response.choices else None
+            self.meter(response.usage,response, 'IncompleteOutput' if finish != 'stop' else '')
+            if finish == 'length': raise OutputLimitError(limit, response.usage)
+            if finish == 'content_filter': raise ValueError('模型服务拦截了此次输出，请调整输入内容后重试。')
+            if finish != 'stop': raise ValueError('模型输出未完整结束，请检查模型接口后重试。')
             text = response.choices[0].message.content
             usage = response.usage
             incoming = getattr(usage, "prompt_tokens", 0) or 0

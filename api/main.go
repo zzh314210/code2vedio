@@ -20,6 +20,8 @@ func main() {
 	importPlatform := flag.String("import-platform", "", "import server-only model config from a local JSON file")
 	initialize := flag.Bool("init-only", false, "initialize accounts and exit")
 	upgradeReasoning := flag.Bool("upgrade-reasoning-defaults", false, "upgrade legacy platform thinking defaults, preserving keys and prices")
+	outputLimit := flag.Int("raise-text-output-limit", 0, "raise enabled platform text model output limits, preserving all other settings")
+	outputTask := flag.String("output-limit-task", "", "apply the output limit to one archived task instead of the platform catalog")
 	reset := flag.String("reset-password", "", "reset one username using C2V_NEW_PASSWORD")
 	preview := flag.Bool("preview", false, "isolate preview browser sessions")
 	flag.Parse()
@@ -39,6 +41,17 @@ func main() {
 		}
 		log.Printf("Upgraded reasoning defaults for %d platform models; credentials and prices preserved", n)
 		return
+	}
+	if *outputLimit != 0 {
+		n, err := store.raiseTextOutputLimit(*outputLimit, *outputTask)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("Raised text output limit to %d for %d configurations; other settings preserved", *outputLimit, n)
+		return
+	}
+	if *outputTask != "" {
+		log.Fatal("output-limit-task requires raise-text-output-limit")
 	}
 	if *importPlatform != "" {
 		if err = store.importPlatform(*importPlatform); err != nil {

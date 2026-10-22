@@ -34,21 +34,12 @@ with tempfile.TemporaryDirectory() as tmp:
         assert captured['config']['text']['api_key']=='test-generation-secret'
         assert captured['config']['text']['model']=='test-model'
         assert '/'+('a'*32)+'/' in captured['config']['teaching_research']['library']
-        from teaching_library import TeachingLibrary
-        lib=TeachingLibrary(captured['config']['teaching_research']['library'])
-        source=lib.put({'url':'https://example.com/a','title':'私有参考','text':'私有参考正文内容。'*30})
-        assert client.get('/api/sources/'+source['id']).status_code==200
-        assert other.get('/api/sources/'+source['id']).status_code==404
-        assert other.get('/api/sources').json()['results']==[]
-        for method in ('get','post'):
-            kwargs={'params':{'query':'私有','platform':'library'}} if method=='get' else {'json':{'query':'私有','platform':'library'}}
-            search=getattr(client,method)('/api/sources/search',**kwargs)
-            assert search.status_code==200,search.text
-            assert search.json()['results'][0]['id']==source['id']
-            assert len(search.json()['results'][0]['text'])<=360
-            assert getattr(other,method)('/api/sources/search',**kwargs).json()['results']==[]
-        assert client.get('/api/sources/search',params={'query':'x'}).status_code==422
-        assert client.get('/api/sources/search',params={'query':'复利','platform':'bilibili'}).status_code==422
+        assert captured['config']['teaching_research']['enabled'] is False
+        for route in ('/api/sources','/api/sources/search','/api/sources/old-source'):
+            assert client.get(route).status_code==404
+        assert client.post('/api/sources/ingest',json={'urls':['https://example.com']}).status_code==404
+        for extra in ({'reference_urls':'https://example.com'},{'source_ids':'["old-source"]'}):
+            assert client.post('/api/jobs',data={'prompt':'上传素材仍然可以制作视频','style':'studio_editorial',**extra}).status_code==422
         for duration in [75,179,180]:
             with patch.object(server,'jobs',{}):
                 response=client.post('/api/jobs',data={'prompt':'演示自由设置视频时长','duration':str(duration),'style':'studio_editorial'})
@@ -60,4 +51,4 @@ with tempfile.TemporaryDirectory() as tmp:
         assert client.get('/api/jobs/'+identity).status_code==200
         assert other.get('/api/jobs/'+identity).status_code==404
 server.executor.shutdown(wait=True)
-print('PASS: signed worker boundary, multipart upload, private configs, job/subresource isolation, private source library and restart ownership.')
+print('PASS: signed worker boundary, multipart upload, private configs, job/subresource isolation, removed search/link endpoints, no external research on new uploads, restart ownership.')

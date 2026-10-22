@@ -171,7 +171,7 @@ func newServer(store *Store, dist, workerSocket string, origins []string) (*Serv
 	m.HandleFunc("PATCH /api/admin/users/{id}", s.status)
 	m.HandleFunc("POST /api/admin/users/{id}/credit", s.credit)
 	m.HandleFunc("GET /api/admin/users/{id}/ledger", s.ledger)
-	for _, pattern := range []string{"/api/jobs", "/api/jobs/", "/api/edits", "/api/edits/", "/api/styles", "/api/sources", "/api/sources/", "/api/voices", "/api/voices/", "/api/music/", "/api/admin/queue", "/api/admin/queue/"} {
+	for _, pattern := range []string{"/api/jobs", "/api/jobs/", "/api/edits", "/api/edits/", "/api/styles", "/api/voices", "/api/voices/", "/api/music/", "/api/admin/queue", "/api/admin/queue/"} {
 		m.HandleFunc(pattern, s.worker)
 	}
 	m.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { fail(w, 404, "接口不存在。") })
@@ -583,7 +583,7 @@ func (s *Server) worker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := current(r)
-	if r.URL.Path == "/api/sources/search" || (r.Method != "GET" && (strings.HasPrefix(r.URL.Path, "/api/music/") || strings.HasPrefix(r.URL.Path, "/api/sources") || strings.HasPrefix(r.URL.Path, "/api/edits") || strings.HasPrefix(r.URL.Path, "/api/jobs/"))) || strings.HasPrefix(r.URL.Path, "/api/voices/") {
+	if (r.Method != "GET" && (strings.HasPrefix(r.URL.Path, "/api/music/") || strings.HasPrefix(r.URL.Path, "/api/edits") || strings.HasPrefix(r.URL.Path, "/api/jobs/"))) || strings.HasPrefix(r.URL.Path, "/api/voices/") {
 		if err := s.Store.limit("sources:"+u.ID, 30, 60); err != nil {
 			fail(w, 429, err.Error())
 			return

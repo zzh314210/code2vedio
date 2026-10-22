@@ -24,20 +24,6 @@
 .material-fields .upload-zone strong { color: #134e4a; }
 .material-fields > .field-label { margin-top: 20px; }
 .material-fields textarea { background: #fff; border-color: #bfdcd3; }
-.source-workspace { background: #fff; border-color: #abd4c8; }
-.source-heading { background: #e3f5ee; border-bottom: 1px solid #c5e6dc; }
-.source-heading h3 { color: #134e4a; font-size: 14px; font-weight: 700; }
-.source-heading p, .source-heading .optional { color: #47645e; }
-.source-heading-icon { background: var(--module-teal); color: #fff; }
-.source-steps li.active, .source-mode button[aria-pressed=true] { color: #0f766e; }
-.source-steps li.active > span { color: #fff; background: #0f766e; }
-.source-mode button[aria-pressed=true] { border-color: #0f766e; font-weight: 650; }
-.source-platforms button[aria-pressed=true] { background: #def3eb; border-color: #0f766e; color: #115e59; }
-.source-query button { background: #0f766e; }
-.source-query button:hover:not(:disabled) { background: #115e59; }
-.source-feedback { color: #255e52; font-size: 12px; }
-.selected-sources { background: #eaf7f1; border-top: 2px solid #a1d5c1; }
-.selected-sources strong { color: #14532d; }
 .output-fields .module-icon { background: var(--module-violet); }
 .output-fields h3 { color: #4c1d95; }
 .output-fields .module-heading p { color: #66527f; }
@@ -68,7 +54,6 @@
 .input-panel .theme-info p { font-size: 12px; }
 .input-panel .theme-check { width: 20px; height: 20px; top: 5px; right: 5px; }
 .input-panel .theme-card.selected { background: #f4eeff; }
-.source-cost-note { margin: 12px 16px 0; color: #47645e; font-size: 11px; line-height: 1.8; }
 .theme-card.selected { border-color: #7c3aed; box-shadow: 0 0 0 2px #7c3aed22; }
 .theme-check { background: #6d28d9; }
 .library-section > .section-heading { padding: 14px 18px; border-radius: 12px; background: #e6f5ed; border-left: 4px solid #047857; }
@@ -100,12 +85,6 @@
   .module-heading h3 { font-size: 15px; }
   .module-heading p { font-size: 11px; }
   .module-icon { width: 32px; height: 32px; }
-  .source-platforms { gap: 6px; }
-  .source-form, .source-heading { padding-left: 12px; padding-right: 12px; }
-  .source-heading-icon { display: none; }
-  .source-query { flex-wrap: wrap; }
-  .source-query input { min-width: 110px; flex: 1; }
-  .source-query button { padding-left: 10px; padding-right: 10px; }
   .preview-panel .panel-heading h2, .input-panel > .panel-heading h2 { font-size: 16px; }
   .library-section > .section-heading { padding: 12px; gap: 10px; }
   .input-panel .themes-section { padding: 13px; }

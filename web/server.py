@@ -29,7 +29,6 @@ from voices import voice_router
 from user_config import visible_config, runtime_config, validate_public_endpoint
 from pipeline import VideoPipeline, STAGES
 from planning_review import PlanningReview, PlanningPending, ReviewConflict
-from teaching_library import TeachingSources
 from teaching_research import validate_plan
 from execution import project_lock
 from media import run_command, ffmpeg_binary, probe
@@ -233,6 +232,8 @@ async def create_job(prompt:Annotated[str,Form()],style:Annotated[str,Form()],du
     if not 15<=duration<=180:raise HTTPException(400,'视频时长请填写15至180秒，最长3分钟。')
     if orientation not in ('landscape','portrait'):raise HTTPException(400,'请选择横屏或竖屏。')
     if production_queue:production_queue.ensure_capacity(current_user.get()['id'])
+    if reference_urls.strip() or source_ids.strip() not in ('','[]'):
+        raise HTTPException(422,'已移除公开资料搜索和外部链接读取，请直接上传参考文件。')
     personal=user_settings()
     if not visible_config(current_config.get())['speech_ready']:raise HTTPException(400,'请完善配音服务配置。')
     if not all(personal[role].get(key) for role in ('text','vision') for key in ('api_key','model','base_url')):raise HTTPException(400,'请先配置生成与视觉审核 API Key。')
@@ -256,14 +257,6 @@ async def create_job(prompt:Annotated[str,Form()],style:Annotated[str,Form()],du
                         raise HTTPException(413,'单份素材请控制在50 MB以内。')
                     stream.write(chunk)
             material.append(target)
-        urls=[u.strip() for u in reference_urls.splitlines() if u.strip()]
-        if len(urls)>20:raise HTTPException(400,'每次最多20条参考链接。')
-        from teaching_research import public_url
-        try:
-            for url in urls:public_url(url)
-            chosen=json.loads(source_ids) if source_ids else []
-            if not isinstance(chosen,list) or len(chosen)>20 or any(not isinstance(x,str) for x in chosen):raise ValueError('参考素材选择无效')
-        except Exception:raise HTTPException(400,'请检查公开参考链接和素材选择。')
         from video_templates import apply_template
         try:c=apply_template(personal,template_id)
         except ValueError as error:raise HTTPException(400,str(error))
@@ -271,8 +264,6 @@ async def create_job(prompt:Annotated[str,Form()],style:Annotated[str,Form()],du
             if style!='studio_sketch':raise HTTPException(400,'真假话实验室使用手绘图解，请选择手绘课堂风格。')
             if orientation!='landscape':raise HTTPException(400,'真假话实验室目前支持横屏，以保证四句原话与检验表清晰可读。')
             if duration<100:raise HTTPException(400,'完整的读题、推理和验算建议至少100秒，请增加时长。')
-        library=TeachingSources(personal['teaching_research']).library
-        if any(not library.get(source_id) for source_id in chosen):raise HTTPException(400,'所选素材不在你的素材库中，请重新选择。')
         if template_id=='notes':
             from materials import load_materials
             try:
@@ -285,7 +276,7 @@ async def create_job(prompt:Annotated[str,Form()],style:Annotated[str,Form()],du
                 shutil.rmtree(project,ignore_errors=True)
                 message=str(error) if isinstance(error,ValueError) and not isinstance(error,UnicodeError) else '无法读取这份笔记，请使用 UTF-8 文本或可复制文字的 PDF。'
                 raise HTTPException(400,message)
-        c=merge(c,{'teaching_research':{'reference_urls':urls,'source_ids':chosen,'enabled':'auto' if urls or chosen else False}})
+        c=merge(c,{'teaching_research':{'reference_urls':[],'source_ids':[],'enabled':False}})
         c=merge(c,{'style':style,'video':{'quality':'high','fps':30,'orientation':orientation,'target_duration':duration,'max_sections':min(6,max(1,__import__('math').ceil(duration/60))),'max_beats':6,'render_timeout':900,'pause_seconds':.12},'assets':{'enabled':False}})
         c['video_overrides']={k:v for k,v in c['video'].items() if k in ('quality','fps','orientation','target_duration','max_sections','max_beats','render_timeout','pause_seconds')}
         c['background_music']=music_service.freeze(music,music_source,project)
@@ -431,15 +422,6 @@ class PlanningApproval(BaseModel):
 
 class ReviewMode(BaseModel):
     auto_approve: bool
-
-class SourceSearch(BaseModel):
-    query: str=Field(min_length=2,max_length=200)
-    platform: Literal['web','wikipedia','library']='wikipedia'
-    limit: int=Field(default=6,ge=1,le=12)
-
-class SourceIngest(BaseModel):
-    urls: list[str]=Field(min_length=1,max_length=20)
-
 
 def reviewed_job(identity, editable=False):
     with lock:
@@ -597,54 +579,6 @@ def set_planning_mode(identity:str,mode:ReviewMode):
         update_job(identity,auto_approve=mode.auto_approve)
         if mode.auto_approve:enqueue_resume(identity,project)
     return {'id':identity,'auto_approve':mode.auto_approve}
-
-
-@app.post('/api/sources/search')
-def search_sources(request:SourceSearch):
-    try:
-        service=TeachingSources({**user_settings().get('teaching_research',{}),'timeout':10})
-        result=service.search_readable(request.query,request.platform,request.limit)
-        # Send small cards; full text is fetched only when previewing a reference.
-        return {'results':[{**{k:v for k,v in item.items() if k in ('id','url','title','kind')},'text':item['text'][:360],'characters':len(item['text'])} for item in result['results']], 'unreadable_count':result.get('unreadable_count',0), 'cached':result.get('cached',False), 'notice':result.get('notice','')}
-    except Exception as e:raise HTTPException(502,'百科服务暂时无法连接，请稍后再试；也可使用我的素材库或上传文稿。')
-
-
-@app.get('/api/sources/search')
-def search_sources_read(query:Annotated[str,Query(min_length=2,max_length=200)],platform:Literal['web','wikipedia','library']='wikipedia',limit:Annotated[int,Query(ge=1,le=12)]=6):
-    return search_sources(SourceSearch(query=query,platform=platform,limit=limit))
-
-
-@app.post('/api/sources/ingest')
-def ingest_sources(request:SourceIngest):
-    service=TeachingSources(user_settings().get('teaching_research',{}));results=[]
-    for url in request.urls:
-        try:
-            source=service.ingest(url)
-            results.append({'status':'indexed',**{k:v for k,v in source.items() if k not in ('text','metadata')}})
-        except Exception as e:
-            import requests
-            from urllib.parse import urlsplit
-            host=urlsplit(url).hostname or ''
-            if host=='bilibili.com' or host.endswith('.bilibili.com'):
-                message='此视频未提供可读取的公开字幕，请上传字幕或文稿。'
-            elif isinstance(e,requests.exceptions.Timeout):message='原网站响应超时，请稍后重试或上传文稿。'
-            elif isinstance(e,requests.exceptions.HTTPError) and e.response is not None and e.response.status_code in (401,403,429):message='原网站限制自动读取或要求登录，请上传你有权使用的文稿。'
-            else:message='此链接没有可读取的完整正文，请换用公开文章或上传文稿。'
-            results.append({'url':url,'status':'failed','error':message})
-    return {'results':results,**service.library.stats()}
-
-
-@app.get('/api/sources/{identity}')
-def get_source(identity:str):
-    source=TeachingSources(user_settings().get('teaching_research',{})).library.get(identity)
-    if not source:raise HTTPException(404,'素材不存在或尚未读取正文。')
-    return source
-
-@app.get('/api/sources')
-def list_sources():
-    service=TeachingSources(user_settings()['teaching_research'])
-    return {'results':service.library.search('',50)}
-
 
 
 from queue_api import register_queue

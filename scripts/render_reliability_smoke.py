@@ -17,14 +17,16 @@ from media import probe
 
 def check_resource_resume():
     from copy import deepcopy
-    config={'text':{'model':'fixed'},'vision':{'model':'review'},'execution':{'backend':'docker','image':'fixed-image','memory':'1g','cpus':1}}
+    config={'text':{'model':'fixed','max_tokens':24000},'vision':{'model':'review'},'execution':{'backend':'docker','image':'fixed-image','memory':'1g','cpus':1}}
     materials={'sources':[],'context':'same input'}
     existing={'config':deepcopy(config),'fingerprint':task_fingerprint('topic',config,materials)}
     updated=deepcopy(config);updated['execution']['memory']='2g'
     assert resume_vision_changed('topic',updated,materials,existing) is False
+    updated['text']['max_tokens']=65536
+    assert resume_vision_changed('topic',updated,materials,existing) is False
     updated['vision']['model']='new-review'
     assert resume_vision_changed('topic',updated,materials,existing) is True
-    for path,value in [(('text','model'),'changed'),(('execution','backend'),'trusted'),(('execution','image'),'another-image')]:
+    for path,value in [(('text','max_tokens'),12000),(('text','reasoning_effort'),'low'),(('text','model'),'changed'),(('execution','backend'),'trusted'),(('execution','image'),'another-image')]:
         candidate=deepcopy(config);candidate[path[0]][path[1]]=value
         try:resume_vision_changed('topic',candidate,materials,existing)
         except ValueError:pass

@@ -153,6 +153,10 @@ func (s *Server) prepareJob(w http.ResponseWriter, r *http.Request, c PersonalCo
 		if !decode(w, r, &d) {
 			return c, "", false
 		}
+		if len(d.ReferenceURLs) > 0 || len(d.SourceIDs) > 0 {
+			fail(w, 422, "已移除公开资料搜索和外部链接读取，请直接上传参考文件。")
+			return c, "", false
+		}
 		if d.Duration == 0 {
 			d.Duration = 30
 		}
@@ -162,16 +166,12 @@ func (s *Server) prepareJob(w http.ResponseWriter, r *http.Request, c PersonalCo
 		if d.Style == "" {
 			d.Style = "studio_noir"
 		}
-		sourceIDs, _ := json.Marshal(d.SourceIDs)
-		form := url.Values{"template_id": {d.TemplateID}, "prompt": {d.Prompt}, "style": {d.Style}, "duration": {strconv.Itoa(d.Duration)}, "orientation": {d.Orientation}, "auto_approve": {strconv.FormatBool(d.AutoApprove)}, "reference_urls": {strings.Join(d.ReferenceURLs, "\n")}, "source_ids": {string(sourceIDs)}}
+		form := url.Values{"template_id": {d.TemplateID}, "prompt": {d.Prompt}, "style": {d.Style}, "duration": {strconv.Itoa(d.Duration)}, "orientation": {d.Orientation}, "auto_approve": {strconv.FormatBool(d.AutoApprove)}}
 		form.Set("bgm_enabled", strconv.FormatBool(d.BGMEnabled))
 		form.Set("bgm_track_id", d.BGMTrackID)
 		form.Set("bgm_upload_id", d.BGMUploadID)
 		if d.BGMVolume != nil {
 			form.Set("bgm_volume", strconv.FormatFloat(*d.BGMVolume, 'f', -1, 64))
-		}
-		if len(d.SourceIDs) == 0 {
-			form.Set("source_ids", "[]")
 		}
 		body := form.Encode()
 		r.Body = readCloser(body)

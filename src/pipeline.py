@@ -142,7 +142,7 @@ def task_fingerprint(topic, config, materials):
 
 
 def resume_vision_changed(topic, config, materials, existing):
-    """Allow operator resource-limit changes without re-buying identical model output."""
+    """Allow resource/output budget increases without re-buying valid output."""
     if task_fingerprint(topic, config, materials)==existing['fingerprint']:
         return False
     old=existing.get('config',{})
@@ -152,6 +152,14 @@ def resume_vision_changed(topic, config, materials, existing):
     if {k:v for k,v in current_execution.items() if k not in limits}!={k:v for k,v in old_execution.items() if k not in limits}:
         raise ValueError('渲染后端与缓存不一致，请创建新项目。')
     previous=json.loads(json.dumps(config))
+    old_text = old.get('text', {})
+    new_text = config.get('text', {})
+    # Increasing the completion budget cannot invalidate previously validated
+    # planning/audio. Every other text setting must still match the archive.
+    if new_text.get('max_tokens', 0) >= old_text.get('max_tokens', 0):
+        previous.setdefault('text', {}).pop('max_tokens', None)
+        if 'max_tokens' in old_text:
+            previous['text']['max_tokens'] = old_text['max_tokens']
     if 'execution' in old:previous['execution']=old_execution
     else:previous.pop('execution',None)
     previous['vision']=old.get('vision',{})

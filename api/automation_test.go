@@ -162,7 +162,7 @@ func TestAutomationJSONAndFrozenConfig(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if form.Get("prompt") != "制作手绘行测视频" || form.Get("style") != "studio_sketch" || form.Get("auto_approve") != "true" || form.Get("source_ids") != "[]" || form.Get("template_id") != "explainer" || form.Get("bgm_enabled") != "true" || form.Get("bgm_track_id") != "easy-lemon" || form.Get("bgm_volume") != "0" {
+		if form.Get("prompt") != "制作手绘行测视频" || form.Get("style") != "studio_sketch" || form.Get("auto_approve") != "true" || form.Has("source_ids") || form.Has("reference_urls") || form.Get("template_id") != "explainer" || form.Get("bgm_enabled") != "true" || form.Get("bgm_track_id") != "easy-lemon" || form.Get("bgm_volume") != "0" {
 			t.Fatal(form)
 		}
 		return &http.Response{StatusCode: 202, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"` + identity + `"}`))}, nil
