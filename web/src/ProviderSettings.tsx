@@ -19,6 +19,6 @@ export default function ProviderSettings({item,onChange}:{item:Channel;onChange:
   }}>{presets.map(p=><option key={p[0]} value={p[0]}>{p[1]}</option>)}</ChoiceSelect><small>按接口服务商选择；托管的 DeepSeek、Kimi 请选托管服务。地址可修改，切换供应商后需重新填写密钥。</small></label>
   <label className="inline-check"><input type="checkbox" checked={item.thinking_enabled!==false} onChange={e=>onChange({thinking_enabled:e.target.checked})}/>开启深度思考</label>
   <label>思考强度<ChoiceSelect aria-label="思考强度" value={item.reasoning_effort||'max'} disabled={item.thinking_enabled===false} onChange={reasoning_effort=>onChange({reasoning_effort})}><option value="low">轻量 · Low</option><option value="medium">均衡 · Medium</option><option value="high">深入 · High</option><option value="max">最高 · Max</option></ChoiceSelect></label>
-  <small className="wide">默认开启最高思考。按供应商注入请求参数；不提供强度调节的模型使用固定思考策略，Claude 旧模型换算为预算，OpenAI 旧型号使用其支持的最高档位。接口拒绝时明确报错，不会静默关闭思考。</small>
+  <small className="wide">默认开启最高思考，按服务商与具体型号适配。Kimi K3、GLM 5.2/5.3、MiniMax M3.1 Flash 支持强度；Qwen 3.8 的 Max 映射为 xhigh。旧型号可能只有开关。调用明细显示发送策略，接口接受不代表回传确认档位；不支持关闭的型号会明确报错。</small>
  </div>;
 }

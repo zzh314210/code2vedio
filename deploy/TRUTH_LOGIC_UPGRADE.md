@@ -8,16 +8,16 @@
 
 | 供应商 | 请求适配 | 产品 Max 的实际处理 |
 | --- | --- | --- |
-| 自定义兼容 / 阿里云托管 | Chat Completions，`enable_thinking`、`reasoning_effort` | 发送 `true` / `max` |
+| 自定义兼容 / 阿里云托管 | Chat Completions，按托管型号注入参数 | DeepSeek/Kimi 发送 max；Qwen 3.8 发送 xhigh；未知兼容别名单独标记未核实 |
 | DeepSeek 官方 | `thinking.type`、`reasoning_effort` | 发送 enabled / max |
-| Kimi 官方 | `thinking.type` | 固定模型策略；不伪造其不支持的强度字段 |
+| Kimi 官方 | K3仅发送 `reasoning_effort`；旧型号用 `thinking.type` | K3支持 low/high/max，默认max；K2.6等不伪造强度字段 |
 | OpenAI | Responses `reasoning.effort` 或兼容协议 `reasoning_effort` | 已知旧型号映射 high / xhigh；未知型号保留 max；不支持推理的旧型号明确拒绝 |
 | Claude 官方 | 原生 Messages、专用认证头 | 新型号 adaptive / output_config；旧型号换算预算，并给正文保留输出空间 |
 | 豆包 | `thinking.type`、`reasoning_effort` | max 映射 high |
-| 智谱 | `thinking.type` | 固定思考策略 |
-| MiniMax | `reasoning_split` | 固定思考策略，不支持关闭时明确报错 |
+| 智谱 | `thinking.type`，GLM 5.2/5.3加 `reasoning_effort` | 最高max；旧型号只发开关；5.3不允许关闭 |
+| MiniMax | `reasoning_split`；M3.1 Flash加 `reasoning_effort` | M3.1 Flash发送max；M2.x固定策略；不支持关闭时明确报错 |
 
-协议实现在 `src/provider_protocols.py`。每次调用记录请求强度与实际策略；平台账单可查看，不保存私有思考正文。自备 API 不扣站内余额，也不进入平台收费流水。失败调用如果上游返回 usage，仍保留真实用量，不伪造为零。开启最高思考会增加耗时与 token，不等于正确性保证。
+协议实现在 `src/provider_protocols.py`。每次调用记录请求强度与**发送映射策略**；这不是供应商回传的实际档位确认。平台账单可查看，不保存私有思考正文。自备 API 不扣站内余额，也不进入平台收费流水。失败调用如果上游返回 usage，仍保留真实用量，不伪造为零。开启最高思考会增加耗时与 token，不等于正确性保证。各型号官方来源与正反例实测见 [PROVIDER_PROTOCOLS.md](PROVIDER_PROTOCOLS.md)。
 
 ### 真实接口结果
 

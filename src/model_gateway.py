@@ -145,7 +145,12 @@ class ModelGateway:
         else:
             content = [{"type": "text", "text": prompt}]
             content.extend({"type": "image_url", "image_url": {"url": image_url(file)}} for file in images or [])
-            arguments = {self.settings.get("token_parameter", "max_completion_tokens"): limit}
+            token_parameter = self.settings.get("token_parameter", "max_completion_tokens")
+            if self.settings.get('provider') == 'dashscope' and self.settings['model'].lower().rsplit('/',1)[-1].startswith('qwen3.8'):
+                # Qwen's max_tokens limits only the answer. Bound thinking and
+                # answer together, matching the output authorized for billing.
+                token_parameter = 'max_completion_tokens'
+            arguments = {token_parameter: limit}
             response = self.client.chat.completions.create(
                 model=self.settings["model"], messages=[{"role": "user", "content": content}],
                 extra_body=extra, stream=bool(self.settings.get("stream", False)),
