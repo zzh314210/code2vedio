@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "proof_hash": "8368d61732a28feae1d2021f9ace639c62ee1084103e7d2a6771bb3e33b3a94a",
+  "final_sha256": "6f4dae14eff66c463aeefde57f9f14727e540f860b75272fcfb60491cb946b0a",
+  "duration": 120.0,
+  "scenes": 6,
+  "engines": [
+    "pillow-ffmpeg-logic-v2"
+  ],
+  "checks": [
+    "compiled narration preserved",
+    "render scene proof hashes",
+    "measured audio timing",
+    "timed subtitles present",
+    "final media streams and duration",
+    "entire final film decoded"
+  ],
+  "scope": "Stage/media integrity. Natural-language translation uses separate semantic audit; sampled visual review is not exhaustive frame verification.",
+  "final_frame_positions": [
+    3.5666666666666664,
+    9.808333333333334,
+    15.158333333333331,
+    21.093333333333334,
+    26.798333333333332,
+    31.688333333333333,
+    38.72,
+    46.74666666666667,
+    53.626666666666665,
+    61.54,
+    69.36833333333333,
+    76.07833333333333,
+    83.86,
+    91.60666666666667,
+    98.24666666666667,
+    105.25333333333333,
+    111.705,
+    117.23499999999999
+  ],
+  "title": "真假话实验室 · 兵团真题",
+  "project": "truth-exam-v1",
+  "media": {
+    "duration": 120.0,
+    "width": 1920,
+    "height": 1080,
+    "has_audio": true
+  }
+}

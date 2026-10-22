@@ -92,3 +92,7 @@
 @media(max-width:700px){.edit-template-picker,.edit-showcase{padding:17px}.edit-template-picker .edit-modes{gap:9px}.edit-template-picker .edit-modes button{padding:13px 8px;gap:7px}.edit-template-symbol{width:28px}.edit-template-picker .edit-modes strong{font-size:12px}.edit-template-picker .edit-modes small{font-size:10px}.editing-grid{gap:17px}.edit-options .duration-control>svg{display:none}}
 
 .edit-review-notes{margin:12px 0;border:1px solid #e1e8ed;border-radius:9px;background:#f7fafb;padding:10px 12px;color:#5e7480;font-size:12px}.edit-review-notes summary{display:flex;align-items:center;gap:7px;cursor:pointer}.edit-review-notes summary::after{content:"＋";margin-left:auto}.edit-review-notes[open] summary::after{content:"−"}.edit-review-notes p{margin:10px 0 6px;line-height:1.8}.edit-review-notes small{font-size:11px;color:#7c8793}
+
+.template-grid article[data-template=truth_logic]{--topic:#3566a5;--topic-bg:#f0f6ff;--topic-line:#c4d6ed;--topic-icon:#d9e8fc;--topic-shadow:#3566a51a}
+
+.sample-variants{display:flex;gap:8px;flex-wrap:wrap}.sample-variants button{padding:9px 15px;border:1px solid #d7dfed;border-radius:10px;background:#f4f7fc;color:#52657e;font-size:13px;transition:background .15s,box-shadow .15s}.sample-variants button[aria-selected=true]{background:#e7efff;color:#285ec0;border-color:#9eb8ed;box-shadow:0 2px 6px #355fa51a}.theme-card:disabled{opacity:.4;transform:none;box-shadow:none}

@@ -10,18 +10,20 @@ import (
 )
 
 type Channel struct {
-	MaxTokens     int             `json:"max_tokens,omitempty"`
-	Stream        bool            `json:"stream,omitempty"`
-	ExtraBody     map[string]bool `json:"extra_body,omitempty"`
-	BaseURL       string          `json:"base_url"`
-	Model         string          `json:"model"`
-	APIKey        string          `json:"api_key,omitempty"`
-	Protocol      string          `json:"protocol,omitempty"`
-	Fallbacks     []string        `json:"fallback_models"`
-	ClearKey      bool            `json:"clear_key,omitempty"`
-	KeyConfigured bool            `json:"key_configured"`
-	Provider      string          `json:"provider,omitempty"`
-	Voice         string          `json:"voice,omitempty"`
+	MaxTokens       int            `json:"max_tokens,omitempty"`
+	Stream          bool           `json:"stream"`
+	ExtraBody       map[string]any `json:"extra_body,omitempty"`
+	Thinking        *bool          `json:"thinking_enabled,omitempty"`
+	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+	BaseURL         string         `json:"base_url"`
+	Model           string         `json:"model"`
+	APIKey          string         `json:"api_key,omitempty"`
+	Protocol        string         `json:"protocol,omitempty"`
+	Fallbacks       []string       `json:"fallback_models"`
+	ClearKey        bool           `json:"clear_key,omitempty"`
+	KeyConfigured   bool           `json:"key_configured"`
+	Provider        string         `json:"provider,omitempty"`
+	Voice           string         `json:"voice,omitempty"`
 }
 type PersonalConfig struct {
 	Saved          bool    `json:"saved"`
@@ -39,7 +41,8 @@ type PersonalConfig struct {
 }
 
 func defaultConfig() PersonalConfig {
-	return PersonalConfig{Text: Channel{MaxTokens: 24000, Protocol: "chat_completions", Fallbacks: []string{}}, Vision: Channel{MaxTokens: 6000, Protocol: "chat_completions", Fallbacks: []string{}}, VisionInherit: false, TTS: Channel{Provider: "edge", Voice: "zh-CN-XiaoxiaoNeural", Fallbacks: []string{}}}
+	enabled := true
+	return PersonalConfig{Text: Channel{Provider: "compatible", Thinking: &enabled, ReasoningEffort: "max", Stream: true, MaxTokens: 24000, Protocol: "chat_completions", Fallbacks: []string{}}, Vision: Channel{Provider: "compatible", Thinking: &enabled, ReasoningEffort: "max", Stream: true, MaxTokens: 24000, Protocol: "chat_completions", Fallbacks: []string{}}, VisionInherit: false, TTS: Channel{Provider: "edge", Voice: "zh-CN-XiaoxiaoNeural", Fallbacks: []string{}}}
 }
 func (c PersonalConfig) public() PersonalConfig {
 	c.PlatformPrices = nil
@@ -93,8 +96,29 @@ func normalizeConfig(c *PersonalConfig, old PersonalConfig) error {
 			return errors.New("最大输出需在1至100000 token范围内。")
 		}
 		for key := range ch.ExtraBody {
-			if key != "enable_thinking" {
+			if key != "enable_thinking" && key != "reasoning_effort" && key != "thinking" && key != "reasoning" && key != "thinking_budget" && key != "output_config" {
 				return errors.New("不支持的扩展模型参数。")
+			}
+		}
+		if i < 2 {
+			if ch.MaxTokens == 0 {
+				ch.MaxTokens = 24000
+			}
+			if ch.Provider == "" {
+				ch.Provider = "compatible"
+			}
+			if !strings.Contains("|compatible|openai|deepseek|moonshot|dashscope|anthropic|doubao|zhipu|minimax|", "|"+ch.Provider+"|") {
+				return errors.New("请选择支持的模型供应商。")
+			}
+			if ch.ReasoningEffort == "" {
+				ch.ReasoningEffort = "max"
+			}
+			if !strings.Contains("|low|medium|high|max|", "|"+ch.ReasoningEffort+"|") {
+				return errors.New("思考强度无效。")
+			}
+			if ch.Thinking == nil {
+				enabled := true
+				ch.Thinking = &enabled
 			}
 		}
 		previous := []Channel{old.Text, old.Vision, old.TTS}[i]
@@ -120,7 +144,7 @@ func normalizeConfig(c *PersonalConfig, old PersonalConfig) error {
 		ch.ClearKey = false
 		ch.KeyConfigured = false
 		if i < 2 {
-			if ch.Protocol != "responses" && ch.Protocol != "chat_completions" {
+			if ch.Protocol != "responses" && ch.Protocol != "chat_completions" && !(ch.Protocol == "anthropic" && ch.Provider == "anthropic") {
 				return errors.New("请选择支持的接口协议。")
 			}
 			if len(ch.Fallbacks) > 8 {

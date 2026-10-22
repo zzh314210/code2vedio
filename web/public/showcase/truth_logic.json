@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "proof_hash": "697a6be9e2b454c469ce4b5f12238e247b50a12a65f08b17ffd7f2c4de61881a",
+  "final_sha256": "753e7aee574fecb92396b660e13430ff5b4d0768d377c2352314e75731312db7",
+  "duration": 120.0,
+  "scenes": 6,
+  "engines": [
+    "pillow-ffmpeg-logic-v3"
+  ],
+  "checks": [
+    "compiled narration preserved",
+    "render scene proof hashes",
+    "measured audio timing",
+    "timed subtitles present",
+    "final media streams and duration",
+    "entire final film decoded"
+  ],
+  "scope": "Stage/media integrity. Natural-language translation uses separate semantic audit; sampled visual review is not exhaustive frame verification.",
+  "final_frame_positions": [
+    3.4200000000000004,
+    9.405000000000001,
+    14.535,
+    20.28,
+    25.845,
+    30.615000000000002,
+    37.38,
+    45.045,
+    51.614999999999995,
+    60.50666666666667,
+    70.31833333333333,
+    78.72833333333332,
+    86.76666666666667,
+    93.47500000000001,
+    99.22500000000001,
+    105.68,
+    111.94500000000001,
+    117.315
+  ],
+  "title": "真假话实验室 · 先找矛盾",
+  "project": "truth-teaching-v4",
+  "media": {
+    "duration": 120.0,
+    "width": 1920,
+    "height": 1080,
+    "has_audio": true
+  }
+}

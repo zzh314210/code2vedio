@@ -88,5 +88,25 @@
     "source": "/showcase/SOURCES.md",
     "duration": 60,
     "kind": "creation"
+  },
+  {
+    "id": "truth_logic",
+    "title": "真假话实验室 · 先找矛盾",
+    "description": "120秒原创练习。四个角色保留原话，先找互补命题，再取反缩小范围，逐行假设并回代。有限域验算、独立语义核对及18帧视觉审核通过，最终文件已完整解码。",
+    "credit": "实际制作与验收 · 2026-10-22",
+    "license": "原创图解；真题题干出处见来源说明",
+    "source": "/showcase/SOURCES.md",
+    "duration": 120,
+    "kind": "creation"
+  },
+  {
+    "id": "truth_logic_exam",
+    "title": "真假话实验室 · 兵团真题",
+    "description": "2021兵团行政执法类行测网友回忆题。先识别甲丁同义，假设都真制造冲突，再用16种参与组合验证A；明确区分“甲参与”和“只有甲参与”。题干出处与选项已归档，视频120秒，审核与最终解码通过。",
+    "credit": "实际制作与验收 · 2026-10-22",
+    "license": "原创图解；真题题干出处见来源说明",
+    "source": "/showcase/SOURCES.md",
+    "duration": 120,
+    "kind": "creation"
   }
 ]

@@ -67,6 +67,13 @@ class PlanningReview:
         token = f"{time.time_ns()}-{uuid.uuid4().hex[:6]}"
         write_json(self.project / "planning_history" / f"{token}-{stage}.json", {"previous": self.document(stage), "replacement": document, "author": author, "feedback": feedback})
         write_json(self.path(stage), document)
+        # An explicit, version-checked edit authorizes a new handoff. Remove
+        # receipts for this stage and its dependants, never the source proof.
+        receipts_file = self.project / 'output' / 'handoff_receipts.json'
+        if receipts_file.is_file():
+            receipts = json.loads(receipts_file.read_text(encoding='utf8'))
+            keep = {'logic_proof.json'} | ({'outline.json'} if stage == 'storyboard' else set())
+            write_json(receipts_file, {k: v for k, v in receipts.items() if k in keep})
         for affected in STAGES[STAGES.index(stage):]:
             self.state["stages"].pop(affected, None)
             if affected != stage:

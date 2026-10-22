@@ -28,6 +28,42 @@ type PlatformCatalog struct {
 	Revision      int64           `json:"revision"`
 }
 
+func (s *Store) upgradeReasoningDefaults() (int, error) {
+	c, err := s.catalog()
+	if err != nil {
+		return 0, err
+	}
+	changed := 0
+	for i := range c.Models {
+		ch := &c.Models[i].Channel
+		before := string(mustJSON(ch))
+		if ch.Provider == "" {
+			ch.Provider = "compatible"
+			if strings.Contains(ch.BaseURL, ".aliyuncs.com/") {
+				ch.Provider = "dashscope"
+			}
+		}
+		if ch.Thinking == nil {
+			enabled := true
+			ch.Thinking = &enabled
+		}
+		if ch.ReasoningEffort == "" {
+			ch.ReasoningEffort = "max"
+		}
+		if *ch.Thinking && ch.MaxTokens < 24000 {
+			ch.MaxTokens = 24000
+		}
+		if before != string(mustJSON(ch)) {
+			changed++
+		}
+	}
+	if changed == 0 {
+		return 0, nil
+	}
+	c.Revision++
+	return changed, s.saveCatalog(c, s.adminID())
+}
+
 func (s *Store) initPlatform() error {
 	_, err := s.DB.Exec(`CREATE TABLE IF NOT EXISTS platform_settings(id INTEGER PRIMARY KEY CHECK(id=1),ciphertext BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS admin_audit(id TEXT PRIMARY KEY,actor_id TEXT NOT NULL,action TEXT NOT NULL,detail TEXT NOT NULL,created_at INTEGER NOT NULL);`)

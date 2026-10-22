@@ -1,10 +1,10 @@
 import {useEffect,useState} from 'react';
-import {ArrowUpRight,BookOpen,Check,Clapperboard,Lightbulb,Map,Play,Shapes,ShoppingBag,Sigma,SpellCheck} from 'lucide-react';
+import {ArrowUpRight,BookOpen,BrainCircuit,Check,Clapperboard,Lightbulb,Map,Play,Shapes,ShoppingBag,Sigma,SpellCheck} from 'lucide-react';
 import {Button} from '@/components/ui/button';
 import ShowcaseDialog,{samples} from './ShowcaseDialog';
 import templates from '../../templates/catalog.json';
 export {templates};
-const templateIcons:Record<string,typeof Shapes>={explainer:Lightbulb,history_map:Map,math_visual:Sigma,word_story:SpellCheck,documentary:Clapperboard,product:ShoppingBag,notes:BookOpen};
+const templateIcons:Record<string,typeof Shapes>={explainer:Lightbulb,history_map:Map,math_visual:Sigma,word_story:SpellCheck,documentary:Clapperboard,product:ShoppingBag,notes:BookOpen,truth_logic:BrainCircuit};
 export default function TemplatePicker({selected,onSelect,onExample,notesOnly=false}:{selected:string;onSelect:(id:string)=>void;onExample:(id:string)=>void;notesOnly?:boolean}){
  const current=templates.find(t=>t.id===selected);const[category,setCategory]=useState(current?.category||'learning'),[preview,setPreview]=useState('');
  useEffect(()=>{const t=templates.find(t=>t.id===selected);if(t)setCategory(t.category)},[selected]);

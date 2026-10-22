@@ -15,6 +15,7 @@ DEFAULTS = {
         "protocol": "responses", "base_url": "https://api.openai.com/v1",
         "api_key": "${OPENAI_API_KEY}", "model": "", "timeout": 180,
         "max_retries": 2, "max_tokens": 12000, "extra_body": {},
+        "provider": "compatible", "thinking_enabled": True, "reasoning_effort": "max",
         "token_parameter": "max_completion_tokens",
     },
     "vision": {"enabled": False, "inherit_text": True, "frames": 6, "rounds": 1, "max_tokens": 2048, "timeout": 90, "max_retries": 0},
@@ -150,8 +151,8 @@ def validate_endpoint(url):
         raise ValueError("API base_url 不允许 query/fragment；参数请放入 extra_body")
 
 def validate_model(settings, role):
-    if settings.get("protocol") not in ("responses", "chat_completions"):
-        raise ValueError(f"{role}.protocol 只能是 responses 或 chat_completions")
+    if settings.get("protocol") not in ("responses", "chat_completions", "anthropic"):
+        raise ValueError(f"{role}.protocol 只能是 responses、chat_completions 或 anthropic")
     validate_endpoint(settings.get("base_url"))
     if not settings.get("model") or settings["model"].startswith("YOUR_"):
         raise ValueError(f"请配置 {role}.model 为你的服务实际支持的模型 ID")

@@ -13,6 +13,7 @@ from configuration import validate_model
 from public_transport import public_client
 from usage_meter import record_usage
 from billing_client import call as billing_call, BillingError
+from provider_protocols import reasoning_body
 
 
 def parse_json(text):
@@ -96,13 +97,38 @@ class ModelGateway:
         self.usage_recorded=True
 
     def _request(self, prompt, images=None, max_tokens=None):
+        if self.settings.get('protocol') == 'anthropic': self.settings['stream'] = False
+        limit = int(max_tokens or self.settings.get("max_tokens", 12000))
+        extra, policy = reasoning_body(self.settings, limit)
+        self.settings['effective_reasoning'] = policy
         if self.on_request:
             stage=self.on_request(self.role, prompt, images or [])
             if stage:self.settings["usage_stage"]=stage
-        billing_call(self.settings,'authorize',{'id':self.attempt_id,'model':self.settings['model'],'role':self.role,'max_output':int(max_tokens or self.settings.get('max_tokens',12000)),'input_bound':0 if images else len(prompt.encode('utf-8'))+1024,'stream':bool(self.settings.get('stream',False)),'stage':self.settings.get('usage_stage','')})
-        limit = int(max_tokens or self.settings.get("max_tokens", 12000))
-        extra = self.settings.get("extra_body", {})
-        if self.settings["protocol"] == "responses":
+        billing_call(self.settings,'authorize',{'id':self.attempt_id,'model':self.settings['model'],'role':self.role,'max_output':int(max_tokens or self.settings.get('max_tokens',12000)),'input_bound':0 if images else len(prompt.encode('utf-8'))+1024,'stream':bool(self.settings.get('stream',False)),'stage':self.settings.get('usage_stage',''),'reasoning_policy':policy})
+        if self.settings.get('reasoning_audit_file'):
+            path = Path(self.settings['reasoning_audit_file'])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open('a', encoding='utf8') as stream:
+                stream.write(json.dumps({'attempt_id': self.attempt_id, 'model': self.settings['model'], 'role': self.role, **policy}, ensure_ascii=False)+'\n')
+        if self.settings["protocol"] == "anthropic":
+            content = [{"type": "text", "text": prompt}]
+            for file in images or []:
+                url = image_url(file)
+                header, data = url.split(',', 1)
+                content.append({'type': 'image', 'source': {'type': 'base64', 'media_type': header[5:].split(';')[0], 'data': data}})
+            response = self.client._client.post(self.settings['base_url'].rstrip('/')+'/messages',
+                headers={'x-api-key': self.settings['api_key'], 'anthropic-version': '2023-06-01'},
+                json={'model': self.settings['model'], 'max_tokens': limit, 'messages': [{'role': 'user', 'content': content}], **extra})
+            response.raise_for_status()
+            raw = response.json()
+            provider_usage = raw.get('usage', {})
+            incoming_native = sum(provider_usage.get(k, 0) for k in ('input_tokens','cache_read_input_tokens','cache_creation_input_tokens'))
+            usage = SimpleNamespace(**{**provider_usage,'input_tokens':incoming_native,'input_tokens_details':{'cached_tokens':provider_usage.get('cache_read_input_tokens',0)}})
+            self.meter(usage, SimpleNamespace(id=raw.get('id'), model=raw.get('model')))
+            if raw.get('stop_reason') != 'end_turn': raise ValueError('Claude 输出未完整结束')
+            text = ''.join(item.get('text', '') for item in raw.get('content', []) if item.get('type') == 'text')
+            incoming, outgoing = incoming_native, raw.get('usage', {}).get('output_tokens', 0)
+        elif self.settings["protocol"] == "responses":
             content = [{"type": "input_text", "text": prompt}]
             content.extend({"type": "input_image", "image_url": image_url(file)} for file in images or [])
             response = self.client.responses.create(

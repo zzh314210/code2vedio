@@ -209,7 +209,7 @@ def public_job(record):
     if production_queue:
         queue_state=production_queue.snapshot(record['id'])
         if queue_state:result['queue']=queue_state
-    result['can_revise']=bool(record.get('status')=='complete' and record.get('project') and all((Path(record['project'])/'output'/name).is_file() for name in ('final.mp4','manifest.json','outline.json','storyboard.json')))
+    result['can_revise']=bool(record.get('template_id')!='truth_logic' and record.get('status')=='complete' and record.get('project') and all((Path(record['project'])/'output'/name).is_file() for name in ('final.mp4','manifest.json','outline.json','storyboard.json')))
     selection=Path(record['project'])/'input/background_music/selection.json' if record.get('project') else None
     if selection and selection.is_file():
         result['background_music']=json.loads(selection.read_text(encoding='utf8'))
@@ -267,6 +267,10 @@ async def create_job(prompt:Annotated[str,Form()],style:Annotated[str,Form()],du
         from video_templates import apply_template
         try:c=apply_template(personal,template_id)
         except ValueError as error:raise HTTPException(400,str(error))
+        if template_id=='truth_logic':
+            if style!='studio_sketch':raise HTTPException(400,'真假话实验室使用手绘图解，请选择手绘课堂风格。')
+            if orientation!='landscape':raise HTTPException(400,'真假话实验室目前支持横屏，以保证四句原话与检验表清晰可读。')
+            if duration<100:raise HTTPException(400,'完整的读题、推理和验算建议至少100秒，请增加时长。')
         library=TeachingSources(personal['teaching_research']).library
         if any(not library.get(source_id) for source_id in chosen):raise HTTPException(400,'所选素材不在你的素材库中，请重新选择。')
         if template_id=='notes':
@@ -465,6 +469,16 @@ def planning_engine(record,project,runtime=None):
     from project_extensions import read_extensions
     pipe.extensions=read_extensions(project/'code/runtime')
     pipe.teaching_research=None
+    proof_path=pipe.output/'logic_proof.json'
+    if c.get('task',{}).get('template_id')=='truth_logic':
+        from video_project import input_fingerprint
+        if manifest.get('inputs_fingerprint')!=input_fingerprint(project):raise ValueError('项目的逻辑运行时或输入已变化，请新建任务。')
+        solve=pipe.logic_modules()[0].solve
+        previous=json.loads(proof_path.read_text(encoding='utf8'))
+        pipe.logic_proof=solve(previous['contract'],pipe.topic+'\n'+pipe.materials.get('context',''))
+        if previous!=pipe.logic_proof:raise ValueError('题干与逻辑证明不一致，请新建任务重新验证。')
+        audit=json.loads((pipe.output/'logic_semantic_audit.json').read_text(encoding='utf8'))
+        if audit.get('proof_hash')!=previous['proof_hash'] or audit.get('equivalent') is not True or audit.get('issues')!=[]:raise ValueError('题干语义审核凭证不匹配，请重新验证。')
     research=project/'output/teaching_research/research.json'
     if research.is_file():
         pipe.teaching_research=json.loads(research.read_text(encoding='utf8'))
@@ -519,6 +533,7 @@ def save_planning(identity:str,stage:str,edit:PlanningEdit):
 def revise_planning(identity:str,stage:str,edit:PlanningRevision):
     with lock:
         record,project=reviewed_job(identity,True)
+        if record.get('template_id')=='truth_logic':raise HTTPException(422,'真假话图解的推理、旁白与题干绑定，暂不支持 AI 自由改写。可手动调整分镜的时长；更换题目请新建创作，重新求解。')
         if production_queue:production_queue.ensure_capacity(record['owner_id'])
         if not production_queue and (editing_service.busy() or any(j.get('status') in ('queued','running','revising') for j in jobs.values())):raise HTTPException(409,'请等待当前任务完成。')
         if stage not in ('outline','storyboard'):raise HTTPException(400,'仅支持大纲和分镜。')

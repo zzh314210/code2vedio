@@ -25,6 +25,7 @@ def record_usage(settings, role, usage=None, response_id=None, actual_model=None
     event={'id':attempt_id or uuid.uuid4().hex,'created_at':time.time(),'role':role,
            'requested_model':settings.get('model',''),'model':actual_model or settings.get('model',''),
            'response_id':response_id,'metered':metered,'usage':raw,'stage':settings.get('usage_stage',''),'stream':bool(settings.get('stream',False))}
+    if settings.get('effective_reasoning'):event['reasoning_policy']=settings['effective_reasoning']
     if metered:
         incoming=int(raw.get('input_tokens',raw.get('prompt_tokens',0)) or 0)
         outgoing=int(raw.get('output_tokens',raw.get('completion_tokens',0)) or 0)

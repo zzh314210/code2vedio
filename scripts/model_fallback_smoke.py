@@ -4,10 +4,10 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'src'))
-from configuration import load_config
+from configuration import resolve_config
 from model_gateway import ModelGateway
 from billing_client import BillingError
-config=load_config(ROOT/'config.local.json')
+config=resolve_config({'text':{'protocol':'chat_completions','base_url':'https://example.com/v1','model':'primary','fallback_models':['fallback-1','fallback-2'],'api_key':'synthetic-test-key'},'vision':{'enabled':True,'inherit_text':True}})
 with tempfile.TemporaryDirectory() as directory:
  root=Path(directory);picture=root/'frame.png';picture.write_bytes(b'test-frame-data')
  for role in ('text','vision'):

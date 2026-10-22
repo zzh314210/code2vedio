@@ -346,17 +346,31 @@ class VideoPipeline:
         self.request_serial += 1
         name = f"{self.request_serial:04}-{self.active_stage or 'prepare'}-{role}"
         (self.request_directory / (name + ".txt")).write_text(sanitize_error(prompt, self.config), encoding="utf-8")
-        settings = self.config[role]
+        settings = (self.text if role=='text' else self.vision).settings
         snapshot = self.style_snapshot or self.style.snapshot()
-        save_json(self.request_directory / (name + ".json"), {"role": role, "stage": self.active_stage, "model": settings["model"], "protocol": settings["protocol"], "max_tokens": settings.get("max_tokens"), "style_id": snapshot["id"], "style_version": snapshot.get("version"), "style_hash": snapshot.get("content_hash"), "images": [str(file) for file in images]})
+        save_json(self.request_directory / (name + ".json"), {"role": role, "stage": self.active_stage, "model": settings["model"], "protocol": settings["protocol"], "max_tokens": settings.get("max_tokens"), "reasoning_policy":settings.get('effective_reasoning'), "style_id": snapshot["id"], "style_version": snapshot.get("version"), "style_hash": snapshot.get("content_hash"), "images": [str(file) for file in images]})
 
         return self.active_stage or "prepare"
 
     def cached_json(self, filename, prompt, validator):
+        if getattr(self, 'logic_proof', None) and filename in ('outline.json', 'storyboard.json'):
+            contract,unused=self.logic_modules()
+            lesson_plan,validate_plan_handoff=contract.lesson_plan,contract.validate_plan_handoff
+            outline, board = lesson_plan(self.logic_proof)
+            result = outline if filename == 'outline.json' else board
+            stage = 'outline' if filename == 'outline.json' else 'storyboard'
+            file = self.output / filename
+            if file.exists(): result = json.loads(file.read_text(encoding='utf8'))
+            validate_plan_handoff(result, self.logic_proof, stage)
+            validator(result)
+            save_json(file, result)
+            self.seal_handoff(filename, result, prompt)
+            return result
         file = self.output / filename
         if file.exists():
             result = json.loads(file.read_text(encoding="utf-8"))
             validator(result)
+            self.seal_handoff(filename, result, prompt)
             return result
         images = self.reference_images if filename in ("outline.json", "storyboard.json") else []
         try:
@@ -384,7 +398,44 @@ class VideoPipeline:
             self.text.json(request, validate_shortened, attempts=2, images=images)
             result = candidate
         save_json(file, result)
+        self.seal_handoff(filename, result, prompt)
         return result
+
+    def seal_handoff(self, filename, document, prompt=''):
+        """Bind every generated artifact to its actual upstream prompt and body."""
+        from logic_contract import digest
+        file = self.output / 'handoff_receipts.json'
+        receipts = json.loads(file.read_text()) if file.exists() else {}
+        # Root relocation is an authorized operation already checked by the
+        # project input fingerprint and safe-path relocation above. Absolute
+        # audio/asset paths do not change the semantic prompt on a project copy.
+        stable_prompt=prompt.replace(str(self.output),'<project-output>').replace(str(self.project),'<project>')
+        receipt = {'document_sha256': digest(document), 'input_sha256': digest(stable_prompt),
+                   'proof_hash': getattr(self, 'logic_proof', {}).get('proof_hash')}
+        previous = receipts.get(filename)
+        if previous and previous != receipt:
+            raise ValueError(f'{filename} 的内容或上游依据已变化，禁止复用旧的下游缓存；请创建新版本。')
+        receipts[filename] = receipt
+        save_json(file, receipts)
+
+    def logic_modules(self):
+        if not hasattr(self,'_logic_modules_cache'):
+            from logic_runtime import load_runtime
+            self._logic_modules_cache=load_runtime(self.project)
+        return self._logic_modules_cache
+
+    def reseal_document(self, filename, document, reason):
+        """Record a pipeline-authorized repair; arbitrary cache edits still fail."""
+        from logic_contract import digest
+        file = self.output / 'handoff_receipts.json'
+        receipts = json.loads(file.read_text()) if file.exists() else {}
+        if filename not in receipts: return
+        previous = receipts[filename]
+        receipts[filename] = {**previous, 'document_sha256': digest(document)}
+        save_json(file, receipts)
+        history = self.output / 'handoff_updates.jsonl'
+        with history.open('a', encoding='utf8') as stream:
+            stream.write(json.dumps({'artifact':filename,'reason':reason,'previous':previous,'current':receipts[filename]},ensure_ascii=False)+'\n')
 
     def prompt(self, stage, original):
         snapshot = getattr(self, "style_snapshot", None)
@@ -424,6 +475,9 @@ class VideoPipeline:
         self.on_event(event)
 
     def validate_outline(self, outline):
+        if getattr(self, 'logic_proof', None):
+            validate_plan_handoff=self.logic_modules()[0].validate_plan_handoff
+            validate_plan_handoff(outline, self.logic_proof, 'outline')
         if not isinstance(outline, dict):
             raise ValueError("大纲必须是 JSON 对象")
         nonempty(outline["topic"], "topic")
@@ -453,6 +507,9 @@ class VideoPipeline:
             validate_step_coverage(outline, self.teaching_research["plan"], "outline")
 
     def validate_storyboard(self, storyboard, outline):
+        if getattr(self, 'logic_proof', None):
+            validate_plan_handoff=self.logic_modules()[0].validate_plan_handoff
+            validate_plan_handoff(storyboard, self.logic_proof, 'storyboard')
         sections = storyboard["sections"]
         if not isinstance(sections, list) or len(sections) != len(outline["sections"]):
             raise ValueError("分镜与大纲章节数量不一致")
@@ -506,6 +563,9 @@ class VideoPipeline:
             validate_step_coverage(storyboard, self.teaching_research["plan"], "storyboard")
 
     def research_teaching(self):
+        if self.config.get('task', {}).get('template_id') == 'truth_logic':
+            self.prepare_logic()
+            return
         if self.config.get('task', {}).get('reuse_verified_research'):
             self.teaching_research = json.loads((self.output / 'teaching_research/research.json').read_text(encoding='utf8'))
             for source in self.teaching_research['sources']:
@@ -516,6 +576,33 @@ class VideoPipeline:
         settings = self.config.get("teaching_research", {})
         if enabled_for(self.topic, settings):
             self.teaching_research = prepare_research(self.topic, self.materials, settings, self.output / "teaching_research", self.text)
+
+    def prepare_logic(self):
+        contract,unused=self.logic_modules()
+        extraction_prompt,solve=contract.extraction_prompt,contract.solve
+        evidence = self.topic + '\n' + self.materials.get('context', '')
+        path = self.output / 'logic_proof.json'
+        if path.exists():
+            previous = json.loads(path.read_text(encoding='utf8'))
+            proof = solve(previous['contract'], evidence)
+            if previous != proof: raise ValueError('逻辑证明缓存或来源已变化，需创建新版本')
+        else:
+            def validate(value): solve(value, evidence)
+            contract = self.text.json(extraction_prompt(evidence), validate)
+            proof = solve(contract, evidence)
+            # A second, separately prompted semantic check catches a wrong
+            # translation before the mathematically correct solver trusts it.
+            audit_prompt = '你是题干形式化审计员。逐句独立核对原话与命题编码，重点检查我/不是我/只有一人、其他人的范围。不能因为计算答案正确就批准错误翻译。仅输出JSON {"equivalent":true或false,"issues":["具体差异"]}。\n原文：'+evidence+'\n形式化与完整真值表：'+json.dumps(proof,ensure_ascii=False)
+            def valid_audit(v):
+                if v.get('equivalent') is not True or v.get('issues') != []: raise ValueError('题干形式化未通过独立语义核对：'+str(v.get('issues')))
+            audit = self.text.json(audit_prompt, valid_audit, attempts=2)
+            save_json(self.output/'logic_semantic_audit.json', {'proof_hash':proof['proof_hash'],**audit})
+            save_json(path, proof)
+        audit=json.loads((self.output/'logic_semantic_audit.json').read_text(encoding='utf8'))
+        if audit.get('proof_hash')!=proof['proof_hash'] or audit.get('equivalent') is not True or audit.get('issues')!=[]:
+            raise ValueError('题干缺少与当前证明对应的独立语义审核，禁止跳过核对。')
+        self.logic_proof = proof
+        self.seal_handoff('logic_proof.json', proof, evidence)
 
     def planning_checkpoint(self, stage, document):
         if getattr(self, "planning_gate", None):
@@ -588,6 +675,13 @@ class VideoPipeline:
         return definitions
 
     def render(self, section, snippets, revision):
+        if getattr(self, 'logic_proof', None):
+            render_logic=self.logic_modules()[1].render_logic
+            from execution import validate_output
+            if snippets.get('proof_hash') != self.logic_proof['proof_hash']: raise ValueError('代码阶段的证明版本不一致')
+            destination = validate_output(self.project,self.output / section['id'] / f'revision_{revision}' / 'lesson.mp4')
+            return render_logic(section, self.logic_proof, destination, self.config['video'],
+                lambda done,total:self.event('render','running',f'可验证图解渲染 {done}/{total}'))
         from execution import validate_output
         directory = validate_output(self.project, self.output / section["id"] / f"revision_{revision}")
         directory.mkdir(parents=True, exist_ok=True)
@@ -645,7 +739,7 @@ class VideoPipeline:
             state=json.loads(state_file.read_text(encoding='utf8'))
             candidate=state.get('attempt')
             if state.get('seed')==seed and isinstance(candidate,int) and 0<=candidate<=self.config['video']['fix_attempts']:
-                self.validate_snippets(state['snippets'],len(section['beats']))
+                if not getattr(self,'logic_proof',None):self.validate_snippets(state['snippets'],len(section['beats']))
                 snippets=state['snippets'];first_attempt=candidate
         for attempt in range(first_attempt,self.config["video"]["fix_attempts"] + 1):
             save_json(state_file,{'seed':seed,'attempt':attempt,'snippets':snippets})
@@ -717,11 +811,14 @@ class VideoPipeline:
                     break
                 if audio_round == 2:
                     raise ValueError("Narration still exceeds target after two automatic revisions; no speech was truncated")
+                if getattr(self,'logic_proof',None):
+                    raise ValueError('完整推理配音超出目标时长，请增加时长；不会让模型删减已验证步骤或截断语音。')
                 self.event("audio", "running", "正在自动精简旁白，以适应目标时长")
                 correction = f"\n上一版真实配音加停顿为 {spoken:.2f} 秒，目标 {target} 秒。必须保留事实与推理，缩短旁白到原字符数的 {target / spoken * .85:.0%}。不要改变章节ID。返回完整分镜JSON。"
                 storyboard = self.text.json(self.prompt("storyboard", storyboard_prompt(outline, self.materials, self.config["video"], self.templates)) + correction,
                     lambda value: self.validate_storyboard(value, outline))
                 save_json(self.output / "storyboard.json", storyboard)
+                self.reseal_document('storyboard.json',storyboard,'measured narration budget repair')
                 self.planning_checkpoint("storyboard", storyboard)
             if target is not None:
                 if isinstance(target, bool) or not isinstance(target, (int, float)) or not math.isfinite(target) or target <= 0:
@@ -742,7 +839,7 @@ class VideoPipeline:
             self.event("audio", "complete")
             if stop_after == "audio":
                 return self.output / "timing.json"
-            self.event("assets", "running", "查询勾选图标源并校验 SVG")
+            self.event("assets", "running", "准备已验证的人物与命题图解" if getattr(self,"logic_proof",None) else "查询勾选图标源并校验 SVG")
             asset_file = self.output / "storyboard_assets.json"
             if asset_file.exists():
                 storyboard = json.loads(asset_file.read_text(encoding="utf-8"))
@@ -762,25 +859,40 @@ class VideoPipeline:
             self.event("assets", "complete", f"素材错误/缺失详见 assets.json；strict 模式可禁止降级")
             if stop_after == "assets":
                 return asset_file
-            self.event("code", "running", "生成配音时长驱动的 Manim 代码")
+            self.event("code", "running", "将证明编译为同步图解" if getattr(self,"logic_proof",None) else "生成配音时长驱动的 Manim 代码")
             # Detect local validation failures before paying for generated code.
             from execution import manim_api_names
-            manim_api_names()
+            if not getattr(self,'logic_proof',None):manim_api_names()
             codes = {}
             for section in storyboard["sections"]:
-                codes[section["id"]] = self.cached_json(f"{section['id']}_code.json", self.prompt("code", code_prompt(section, templates=self.templates, settings=self.config["video"])), lambda value: self.validate_snippets(value, len(section["beats"])))
+                if getattr(self, 'logic_proof', None):
+                    code = {'engine':'logic_diagram','proof_hash':self.logic_proof['proof_hash'],'beats':[{'scene_id':b['scene_id']} for b in section['beats']]}
+                    self.seal_handoff(f"{section['id']}_code.json",code,json.dumps(section,ensure_ascii=False,sort_keys=True))
+                    save_json(self.output/f"{section['id']}_code.json",code)
+                    codes[section['id']] = code
+                else:
+                    codes[section["id"]] = self.cached_json(f"{section['id']}_code.json", self.prompt("code", code_prompt(section, templates=self.templates, settings=self.config["video"])), lambda value: self.validate_snippets(value, len(section["beats"])))
             self.event("code", "complete")
             if stop_after == "code":
                 return self.output
             rendered_file = self.output / "rendered.json"
-            self.event("render", "running", "本地渲染，失败自动回传代码模型修复")
+            self.event("render", "running", "绘制人物、关系与检验过程" if getattr(self,"logic_proof",None) else "本地渲染，失败自动回传代码模型修复")
             rendered = json.loads(rendered_file.read_text(encoding="utf-8")) if rendered_file.exists() else {}
+            if getattr(self,'logic_proof',None):
+                receipt_matches=self.logic_modules()[1].receipt_matches
+                for section in storyboard['sections']:
+                    old=rendered.get(section['id'])
+                    if old and not receipt_matches(Path(old['video']),section,self.logic_proof):
+                        rendered.pop(section['id'])
+                        (self.output/'reviewed.json').unlink(missing_ok=True)
+                        for old_review in self.output.glob('*_review_*.json'):old_review.unlink(missing_ok=True)
             for section in storyboard["sections"]:
                 section_id = section["id"]
                 if section_id in rendered and Path(rendered[section_id]["video"]).is_file():
                     continue
                 video, snippets, revision = self.render_with_repairs(section, codes[section_id], 0)
                 save_json(self.output / f"{section_id}_code.json", snippets)
+                self.reseal_document(f'{section_id}_code.json',snippets,'render repair result')
                 codes[section_id] = snippets
                 rendered[section_id] = {"video": str(video), "revision": revision}
                 save_json(rendered_file, rendered)
@@ -806,10 +918,13 @@ class VideoPipeline:
                         save_json(self.output / f"{section_id}_review_{round_number}.json", feedback)
                         if not feedback["has_issues"] or round_number == self.config["vision"]["rounds"]:
                             break
+                        if getattr(self, 'logic_proof', None):
+                            raise ValueError('可验证图解视觉审核发现问题，成片暂不发布：'+json.dumps(feedback['suggested_improvements'],ensure_ascii=False))
                         revised = self.text.json(self.prompt("code", code_prompt(section, snippets, json.dumps(feedback, ensure_ascii=False), self.templates, self.config["video"])), lambda value: self.validate_snippets(value, len(section["beats"])))
                         video, snippets, revision = self.render_with_repairs(section, revised, revision + 1)
                     rendered[section_id] = {"video": str(video), "revision": revision}
                     save_json(self.output / f"{section_id}_code.json", snippets)
+                    self.reseal_document(f'{section_id}_code.json',snippets,'visual repair result')
                 save_json(reviewed_file, rendered)
             else:
                 save_json(reviewed_file, rendered)
@@ -857,6 +972,10 @@ class VideoPipeline:
                 raise RuntimeError("最终视频缺少视频、音频或字幕轨")
             if abs(details["duration"] - duration) > 0.2:
                 raise RuntimeError("最终视频时长异常")
+            if getattr(self,'logic_proof',None):
+                from logic_acceptance import final_receipt
+                receipts=[json.loads(Path(rendered[s['id']]['video']).with_suffix('.receipt.json').read_text()) for s in storyboard['sections']]
+                save_json(self.output/'logic_final_acceptance.json',final_receipt(self.logic_proof,storyboard,final,details,self.logic_modules()[0],receipts))
             self.manifest.update({"status": "complete", "media": details, "output": str(final)})
             self.event("compose", "complete")
             return final

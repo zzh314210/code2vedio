@@ -15,6 +15,18 @@ func truncate(s string, n int) string {
 	}
 	return s
 }
+func safeReasoning(src map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, key := range []string{"provider", "requested_effort", "effective_effort"} {
+		if value, ok := src[key].(string); ok {
+			out[key] = truncate(value, 100)
+		}
+	}
+	if enabled, ok := src["enabled"].(bool); ok {
+		out["enabled"] = enabled
+	}
+	return out
+}
 func safeUsage(raw json.RawMessage) map[string]any {
 	var src map[string]any
 	json.Unmarshal(raw, &src)

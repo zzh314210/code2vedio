@@ -27,6 +27,9 @@ curl https://vedio.myaihub.asia/api/jobs \
     "model": "your-generation-model",
     "api_key": "YOUR_PROVIDER_KEY",
     "protocol": "chat_completions",
+    "provider": "compatible",
+    "thinking_enabled": true,
+    "reasoning_effort": "max",
     "fallback_models": [],
     "max_tokens": 24000
   },
@@ -36,14 +39,17 @@ curl https://vedio.myaihub.asia/api/jobs \
     "model": "your-vision-model",
     "api_key": "YOUR_VISION_KEY",
     "protocol": "chat_completions",
+    "provider": "compatible",
+    "thinking_enabled": true,
+    "reasoning_effort": "max",
     "fallback_models": [],
-    "max_tokens": 6000
+    "max_tokens": 24000
   },
   "tts": {"provider": "edge", "voice": "zh-CN-YunxiNeural"}
 }
 ```
 
-模型名称自由填写，协议支持 `chat_completions` 和 `responses`。`vision_inherit=true` 时使用生成模型进行图片审核，所选模型必须支持图片。`api_key` 留空保留同一接口已有密钥；更换接口地址后必须重新填写，`clear_key=true` 明确删除。
+模型名称自由填写，协议支持 `chat_completions`、`responses` 和 Claude 原生 `anthropic`。`provider` 为 `compatible`、`dashscope`、`deepseek`、`moonshot`、`openai`、`anthropic`、`doubao`、`zhipu`、`minimax`。默认 `thinking_enabled=true`、`reasoning_effort=max`，也可选 low/medium/high；按供应商适配请求body，实际策略见调用明细。不支持的能力明确报错，不静默关闭思考。`vision_inherit=true` 时使用生成模型进行图片审核，所选模型必须支持图片。`api_key` 留空保留同一接口已有密钥；更换接口地址后必须重新填写，`clear_key=true` 明确删除。
 
 `GET /api/config` 只返回配置状态，不返回密钥。个人模型服务不使用部署机器的模型密钥。`use_platform=true` 仅在管理员配置并启用平台模式后可用。
 
@@ -138,6 +144,8 @@ Authorization: Bearer YOUR_FRAME_KEY
 密钥留空时，只会使用当前用户在**相同地址、相同用途**下已保存的密钥；`clear_key=true` 不复用。未保存的新地址和密钥可直接获取列表，该操作不保存配置。服务不支持列表时，仍可手动填写模型名称。网页密钥输入项标识为 `text_api_key`、`vision_api_key`；面板显示中文，API JSON 保持每个服务内的 `api_key` 字段兼容。
 
 ## 创作模板与笔记复盘
+
+新增 `truth_logic`（真假话实验室）：手绘横屏、100–180秒。原话抽取→独立语义核对→程序穷举→证明编译六幕图解→配音→渲染→视觉审核→合成。仅支持明确约束的两类四人题，超范围拒绝；证明绑定的大纲与旁白只读，支持调时长和读题停顿，暂不支持语义改写/成片修改。范围、样题与凭据见 [TRUTH_LOGIC_UPGRADE.md](TRUTH_LOGIC_UPGRADE.md)。
 
 任务支持 `template_id`：`explainer`（知识讲解）、`documentary`（微纪录片）、`product`（产品种草）、`history_map`（历史地图故事）、`math_visual`（数学看得见）、`word_story`（单词奇遇记）、`notes`（笔记放映室）。模板规定叙事与视觉约束，画风仍使用 `style` 单独选择。
 

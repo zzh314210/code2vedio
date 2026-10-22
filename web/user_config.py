@@ -12,7 +12,13 @@ class ModelConfig(BaseModel):
     model: str = Field(default='', max_length=150)
     api_key: str = Field(default='', max_length=2048)
     clear_key: bool = False
-    protocol: Literal['responses', 'chat_completions'] = 'chat_completions'
+    protocol: Literal['responses', 'chat_completions', 'anthropic'] = 'chat_completions'
+    provider: str = 'compatible'
+    thinking_enabled: bool = True
+    reasoning_effort: Literal['low', 'medium', 'high', 'max'] = 'max'
+    max_tokens: int = Field(default=24000, ge=1, le=100000)
+    stream: bool = True
+    extra_body: dict = Field(default_factory=dict)
     fallback_models: list[str] = Field(default_factory=list, max_length=8)
 
 

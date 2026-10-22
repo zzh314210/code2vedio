@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "people": [
+    "甲",
+    "乙",
+    "丙",
+    "丁"
+  ],
+  "variable": {
+    "id": "actor",
+    "label": "做这件事的人",
+    "values": [
+      "甲",
+      "乙",
+      "丙",
+      "丁"
+    ]
+  },
+  "true_count": 1,
+  "assumptions": [
+    "甲、乙、丙、丁四人中恰有一人做了这件事。",
+    "四人中只有一人说真话。"
+  ],
+  "statements": [
+    {
+      "id": "s1",
+      "speaker": "甲",
+      "text": "是乙做的。",
+      "claim": {
+        "eq": [
+          "actor",
+          "乙"
+        ]
+      }
+    },
+    {
+      "id": "s2",
+      "speaker": "乙",
+      "text": "不是我做的。",
+      "claim": {
+        "not": {
+          "eq": [
+            "actor",
+            "乙"
+          ]
+        }
+      }
+    },
+    {
+      "id": "s3",
+      "speaker": "丙",
+      "text": "不是甲做的。",
+      "claim": {
+        "not": {
+          "eq": [
+            "actor",
+            "甲"
+          ]
+        }
+      }
+    },
+    {
+      "id": "s4",
+      "speaker": "丁",
+      "text": "是丙做的。",
+      "claim": {
+        "eq": [
+          "actor",
+          "丙"
+        ]
+      }
+    }
+  ]
+}

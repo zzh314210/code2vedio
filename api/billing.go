@@ -112,6 +112,7 @@ type meterRequest struct {
 	Cached             int64           `json:"cached_input_tokens"`
 	Metered            bool            `json:"metered"`
 	Usage              json.RawMessage `json:"usage"`
+	Reasoning          map[string]any  `json:"reasoning_policy"`
 }
 
 func (b *Billing) authorize(d meterRequest) (map[string]any, error) {
@@ -230,7 +231,7 @@ func (b *Billing) authorize(d meterRequest) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err = tx.Exec("UPDATE billing_calls SET mode=?,stage=?,stream=? WHERE id=?", mode, truncate(d.Stage, 60), d.Stream, d.ID); err != nil {
+	if _, err = tx.Exec("UPDATE billing_calls SET mode=?,stage=?,stream=?,usage=? WHERE id=?", mode, truncate(d.Stage, 60), d.Stream, string(mustJSON(map[string]any{"reasoning_policy": safeReasoning(d.Reasoning)})), d.ID); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -244,14 +245,19 @@ func (b *Billing) settle(d meterRequest) (map[string]any, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	var uid, job, price, status, mode string
+	var uid, job, price, status, mode, oldUsage string
 	var reserve, charged int64
-	err = tx.QueryRow("SELECT user_id,job_id,price,status,reserved_cents,charged_cents,mode FROM billing_calls WHERE id=?", d.ID).Scan(&uid, &job, &price, &status, &reserve, &charged, &mode)
+	err = tx.QueryRow("SELECT user_id,job_id,price,status,reserved_cents,charged_cents,mode,usage FROM billing_calls WHERE id=?", d.ID).Scan(&uid, &job, &price, &status, &reserve, &charged, &mode, &oldUsage)
 	if errors.Is(err, sql.ErrNoRows) {
 		return map[string]any{"billing": false}, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if d.Reasoning == nil {
+		var old map[string]any
+		json.Unmarshal([]byte(oldUsage), &old)
+		d.Reasoning, _ = old["reasoning_policy"].(map[string]any)
 	}
 	if uid != d.UserID || job != d.JobID {
 		return nil, errors.New("计费凭证不属于此任务。")
@@ -284,7 +290,9 @@ func (b *Billing) settle(d meterRequest) (map[string]any, error) {
 		}
 	}
 	if !d.Metered {
-		if _, err = tx.Exec("UPDATE billing_calls SET status='unmetered',usage=? WHERE id=?", string(mustJSON(safeUsage(d.Usage))), d.ID); err != nil {
+		unknownUsage := safeUsage(d.Usage)
+		unknownUsage["reasoning_policy"] = safeReasoning(d.Reasoning)
+		if _, err = tx.Exec("UPDATE billing_calls SET status='unmetered',usage=? WHERE id=?", string(mustJSON(unknownUsage)), d.ID); err != nil {
 			return nil, err
 		}
 		if err = tx.Commit(); err != nil {
@@ -344,7 +352,7 @@ func (b *Billing) settle(d meterRequest) (map[string]any, error) {
 	if err = tx.QueryRow("SELECT balance_cents FROM users WHERE id=?", uid).Scan(&balance); err != nil {
 		return nil, err
 	}
-	usage, _ := json.Marshal(map[string]any{"input_tokens": d.Input, "output_tokens": d.Output, "cached_input_tokens": d.Cached, "upstream": safeUsage(d.Usage)})
+	usage, _ := json.Marshal(map[string]any{"input_tokens": d.Input, "output_tokens": d.Output, "cached_input_tokens": d.Cached, "upstream": safeUsage(d.Usage), "reasoning_policy": safeReasoning(d.Reasoning)})
 	if _, err = tx.Exec("UPDATE billing_calls SET cost_micro=?,charged_cents=?,reserved_cents=0,status='settled',usage=? WHERE id=?", cost, charge, string(usage), d.ID); err != nil {
 		return nil, err
 	}

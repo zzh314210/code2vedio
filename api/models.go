@@ -59,6 +59,7 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 	}
 	var d struct {
 		Role     string `json:"role"`
+		Provider string `json:"provider"`
 		BaseURL  string `json:"base_url"`
 		APIKey   string `json:"api_key"`
 		ClearKey bool   `json:"clear_key"`
@@ -101,7 +102,7 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 		fail(w, 422, "请先填写此服务的密钥；更换接口地址后需要重新填写。")
 		return
 	}
-	s.fetchModels(w, r, Channel{BaseURL: d.BaseURL, APIKey: d.APIKey})
+	s.fetchModels(w, r, Channel{BaseURL: d.BaseURL, APIKey: d.APIKey, Provider: d.Provider})
 }
 func (s *Server) fetchModels(w http.ResponseWriter, r *http.Request, d Channel) {
 	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodGet, d.BaseURL+"/models", nil)
@@ -109,7 +110,12 @@ func (s *Server) fetchModels(w http.ResponseWriter, r *http.Request, d Channel) 
 		fail(w, 422, "接口地址格式不正确。")
 		return
 	}
-	upstream.Header.Set("Authorization", "Bearer "+d.APIKey)
+	if d.Provider == "anthropic" {
+		upstream.Header.Set("x-api-key", d.APIKey)
+		upstream.Header.Set("anthropic-version", "2023-06-01")
+	} else {
+		upstream.Header.Set("Authorization", "Bearer "+d.APIKey)
+	}
 	upstream.Header.Set("Accept", "application/json")
 	response, err := s.ModelsClient.Do(upstream)
 	if err != nil {

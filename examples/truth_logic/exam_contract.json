@@ -1,0 +1,207 @@
+{
+  "version": 2,
+  "people": [
+    "甲",
+    "乙",
+    "丙",
+    "丁"
+  ],
+  "variables": [
+    {
+      "id": "a",
+      "label": "甲",
+      "values": [
+        false,
+        true
+      ]
+    },
+    {
+      "id": "b",
+      "label": "乙",
+      "values": [
+        false,
+        true
+      ]
+    },
+    {
+      "id": "c",
+      "label": "丙",
+      "values": [
+        false,
+        true
+      ]
+    },
+    {
+      "id": "d",
+      "label": "丁",
+      "values": [
+        false,
+        true
+      ]
+    }
+  ],
+  "true_count": 2,
+  "assumptions": [
+    "经过调查，发现两个人说的真话"
+  ],
+  "statements": [
+    {
+      "id": "s1",
+      "speaker": "甲",
+      "text": "我没有做这件事，这件事是乙做的",
+      "claim": {
+        "and": [
+          {
+            "not": {
+              "eq": [
+                "a",
+                true
+              ]
+            }
+          },
+          {
+            "eq": [
+              "b",
+              true
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "s2",
+      "speaker": "乙",
+      "text": "甲、丙、丁中肯定有一人做了这件事",
+      "claim": {
+        "or": [
+          {
+            "eq": [
+              "a",
+              true
+            ]
+          },
+          {
+            "eq": [
+              "c",
+              true
+            ]
+          },
+          {
+            "eq": [
+              "d",
+              true
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "s3",
+      "speaker": "丙",
+      "text": "此事是由甲和乙中的一人做的",
+      "claim": {
+        "and": [
+          {
+            "or": [
+              {
+                "eq": [
+                  "a",
+                  true
+                ]
+              },
+              {
+                "eq": [
+                  "b",
+                  true
+                ]
+              }
+            ]
+          },
+          {
+            "not": {
+              "and": [
+                {
+                  "eq": [
+                    "a",
+                    true
+                  ]
+                },
+                {
+                  "eq": [
+                    "b",
+                    true
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "s4",
+      "speaker": "丁",
+      "text": "甲说的是事实",
+      "claim": {
+        "and": [
+          {
+            "not": {
+              "eq": [
+                "a",
+                true
+              ]
+            }
+          },
+          {
+            "eq": [
+              "b",
+              true
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "options": [
+    {
+      "id": "A",
+      "text": "甲是罪犯",
+      "claim": {
+        "eq": [
+          "a",
+          true
+        ]
+      }
+    },
+    {
+      "id": "B",
+      "text": "乙是罪犯",
+      "claim": {
+        "eq": [
+          "b",
+          true
+        ]
+      }
+    },
+    {
+      "id": "C",
+      "text": "丙是罪犯",
+      "claim": {
+        "eq": [
+          "c",
+          true
+        ]
+      }
+    },
+    {
+      "id": "D",
+      "text": "丁是罪犯",
+      "claim": {
+        "eq": [
+          "d",
+          true
+        ]
+      }
+    }
+  ]
+}

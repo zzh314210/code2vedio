@@ -2,6 +2,8 @@
 
 正式站：https://vedio.myaihub.asia 。Go 用户/API服务 + 私有 Python worker + React/Vite；已移除旧浏览器 Basic Auth。产品说明及样例验收见 [PRODUCT_UPGRADE.md](PRODUCT_UPGRADE.md)，用户系统/计费见 [USER_SYSTEM.md](USER_SYSTEM.md)，接口见 [API.md](API.md)，剪辑依赖见 [EDITING.md](EDITING.md)。
 
+供应商思考协议、真假话证明管线、两条实际成片与验收范围见 [TRUTH_LOGIC_UPGRADE.md](TRUTH_LOGIC_UPGRADE.md)。
+
 ## 运行
 
 - `code2vedio`：Go，`api/bin/frame-api`，127.0.0.1:7860，经Nginx HTTPS。

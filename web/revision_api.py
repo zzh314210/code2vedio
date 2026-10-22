@@ -171,6 +171,8 @@ class RevisionAPI:
 
     def create(self, identity: str, edit: FilmRevision):
         parent, source = self.completed(identity)
+        if parent.get('template_id') == 'truth_logic':
+            raise HTTPException(422, '真假话图解的内容与证明绑定，暂不支持成片自由改写。请新建创作并填写新题目，重新求解；此次操作不会调用模型或扣费。')
         feedback = edit.feedback.strip()
         if len(feedback) < 2:
             raise HTTPException(422, '请具体描述想修改的地方。')

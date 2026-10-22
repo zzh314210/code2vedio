@@ -119,6 +119,7 @@ def initialize_project(base, topic, config, identifier=None, parent=None):
     task = config.get("task", config.get("course", {}))
     cube_baseline = studio_style and task.get("component_profile") == "cube_baseline"
     runtime_files = ("scene_runtime.py", "project_extensions.py") + (("series_style.py", "handdrawn_runtime.py", "handdrawn_bridge.cjs") if studio_style else ()) + (("cube_geometry.py", "studio_components.py", "rough_square.json") if cube_baseline else ())
+    if task.get('template_id')=='truth_logic':runtime_files += ('logic_contract.py','logic_renderer.py')
     for name in runtime_files:
         target = contained(base, base / "code/runtime" / name)
         if not target.exists():

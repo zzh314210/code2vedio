@@ -20,6 +20,7 @@ func TestBillingReservationAndActualUsage(t *testing.T) {
 	b.Enabled = true
 	b.Prices = PriceBook{EndpointSuffix: ".example.org", Rates: []Rate{{Model: "test-model", Input: 20000000, Output: 100000000, Cached: 2000000, MaxInput: 1000000}}}
 	d := meterRequest{ID: strings.Repeat("a", 32), UserID: u.ID, JobID: "job-billing", Model: "test-model", Role: "text", MaxOutput: 12000}
+	d.Reasoning = map[string]any{"provider": "deepseek", "enabled": true, "requested_effort": "max", "effective_effort": "max", "api_key": "do-not-store"}
 	result, err := b.authorize(d)
 	if err != nil || result["reserved_cents"].(int64) != 2120 {
 		t.Fatal(result, err)
@@ -28,6 +29,7 @@ func TestBillingReservationAndActualUsage(t *testing.T) {
 	if _, err = b.authorize(d); err != nil {
 		t.Fatal(err)
 	}
+	d.Reasoning = nil // A later reconciliation must preserve the authorized policy.
 	d.Metered = true
 	d.Input = 1000
 	d.Cached = 500
@@ -40,6 +42,11 @@ func TestBillingReservationAndActualUsage(t *testing.T) {
 	result, err = b.settle(d)
 	if err != nil || result["charged_cents"].(int64) != 3 {
 		t.Fatal("settlement not idempotent", result, err)
+	}
+	var audit string
+	store.DB.QueryRow("SELECT usage FROM billing_calls WHERE id=?", d.ID).Scan(&audit)
+	if !strings.Contains(audit, `"effective_effort":"max"`) || strings.Contains(audit, "do-not-store") {
+		t.Fatal("reasoning policy lost or secret persisted", audit)
 	}
 	actual, _ := store.user(u.ID)
 	if actual.Balance != 9997 {

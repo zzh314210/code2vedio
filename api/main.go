@@ -19,6 +19,7 @@ func main() {
 	listen := flag.String("listen", "127.0.0.1:7860", "HTTP listen address")
 	importPlatform := flag.String("import-platform", "", "import server-only model config from a local JSON file")
 	initialize := flag.Bool("init-only", false, "initialize accounts and exit")
+	upgradeReasoning := flag.Bool("upgrade-reasoning-defaults", false, "upgrade legacy platform thinking defaults, preserving keys and prices")
 	reset := flag.String("reset-password", "", "reset one username using C2V_NEW_PASSWORD")
 	preview := flag.Bool("preview", false, "isolate preview browser sessions")
 	flag.Parse()
@@ -30,6 +31,14 @@ func main() {
 	defer store.DB.Close()
 	if err = store.bootstrap(); err != nil {
 		log.Fatal(err)
+	}
+	if *upgradeReasoning {
+		n, err := store.upgradeReasoningDefaults()
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("Upgraded reasoning defaults for %d platform models; credentials and prices preserved", n)
+		return
 	}
 	if *importPlatform != "" {
 		if err = store.importPlatform(*importPlatform); err != nil {
