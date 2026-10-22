@@ -12,6 +12,7 @@ func TestBillingReservationAndActualUsage(t *testing.T) {
 	u, _ := registered(t, s, "billed")
 	store.credit(store.adminID(), u.ID, 10000, "test deposit", "billing-deposit-00001")
 	cfg := defaultConfig()
+	cfg.Quality.MaxCostCents = 0 // This test isolates reservations; cap behavior has dedicated tests.
 	cfg.UsePlatform = true
 	cfg.Text.Model = "test-model"
 	cfg.Text.BaseURL = "https://model.example.org/v1"

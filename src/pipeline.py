@@ -119,7 +119,7 @@ def validate_code(value, count, extensions=None, video=None, runtime=None):
             raise ValueError(f"第{index}个分镜：{error}") from error
 
 
-STAGES = ["outline", "storyboard", "audio", "assets", "code", "render", "review", "compose"]
+STAGES = ["outline", "storyboard", "criteria", "audio", "assets", "code", "render", "review", "compose", "acceptance"]
 
 
 def review_summary(output, rendered, enabled):
@@ -267,6 +267,18 @@ class VideoPipeline:
         if vision_changed:
             for stage in ("review", "compose"):
                 self.manifest["stages"].pop(stage, None)
+        self.harness = None
+        self.acceptance = None
+        if self.config.get('quality',{}).get('enabled'):
+            from quality_harness import QualityHarness
+            self.harness = QualityHarness(self)
+            self.acceptance = ModelGateway(config.get('acceptance',config['text']), 'acceptance', on_request=self.record_request)
+            for gateway in (self.text,self.vision,self.acceptance):
+                if gateway:
+                    gateway.budget=self.harness.budget
+                    if getattr(gateway,'client',None):gateway.client.max_retries=0
+            self.config['video']['fix_attempts']=self.harness.policy['render_revisions']
+            if self.vision:self.config['vision']['rounds']=self.harness.policy['visual_revisions']
         self.manifest["output_directory"] = str(self.output)
         save_json(manifest, self.manifest)
         save_json(self.output / "materials.json", self.materials)
@@ -354,7 +366,7 @@ class VideoPipeline:
         self.request_serial += 1
         name = f"{self.request_serial:04}-{self.active_stage or 'prepare'}-{role}"
         (self.request_directory / (name + ".txt")).write_text(sanitize_error(prompt, self.config), encoding="utf-8")
-        settings = (self.text if role=='text' else self.vision).settings
+        settings = ({'text':self.text,'vision':self.vision,'acceptance':getattr(self,'acceptance',None)}[role]).settings
         snapshot = self.style_snapshot or self.style.snapshot()
         save_json(self.request_directory / (name + ".json"), {"role": role, "stage": self.active_stage, "model": settings["model"], "protocol": settings["protocol"], "max_tokens": settings.get("max_tokens"), "reasoning_policy":settings.get('effective_reasoning'), "style_id": snapshot["id"], "style_version": snapshot.get("version"), "style_hash": snapshot.get("content_hash"), "images": [str(file) for file in images]})
 
@@ -403,6 +415,7 @@ class VideoPipeline:
                     nonempty(line, "narration", self.config["video"].get("narration_max_chars", 140))
                     beat["narration"] = line
                 validator(candidate)
+            if getattr(self,"harness",None):self.harness.budget.take_revision("planning","structured-text-storyboard")
             self.text.json(request, validate_shortened, attempts=2, images=images)
             result = candidate
         save_json(file, result)
@@ -469,12 +482,17 @@ class VideoPipeline:
             original += "\n本项目允许的动画扩展（空对象表示无扩展；调用 self.extension(名称字面量, ...)，首个参数自动传入 scene）：" + json.dumps(descriptions, ensure_ascii=False)
         if stage == 'review':
             original += '\n字幕仅在对应subtitles的start/end期间显示；旁白结束后的停顿、回忆题留白和正常转场中字幕为空是预期行为。不要要求字幕常驻或把空字幕框本身当成错误。地图已经标有“地图定位示意”且地点关系正确时，不需要强制添加经纬度数字或比例尺。仍须核对地图位置、日期、文字重叠与内容遗漏。'
+        if stage=='code' and getattr(self,'harness',None):
+            original+='\n质量约束：严格保持已确认分镜与旁白；每个镜头必须以图形变化解释原理，不能只显示文字。保持角色、颜色、数值和因果关系一致。画布底部18%为字幕安全区，不在此处绘制内容或重复字幕。转场必须保留可理解的关系，不能出现长空白。验收失败后只修正明确问题，不简化标准。'
+            if self.harness.contract:original+='\n冻结的验收标准：'+json.dumps(self.harness.contract['checks'],ensure_ascii=False)
         if stage in ("outline", "storyboard", "code") and getattr(self, "teaching_research", None):
             original += research_context(self.teaching_research)
         return original + f"\n项目语言：{course.get('language', '中文')}\n创作者课程要求（仍须符合事实和输出格式约束）：{course.get('instructions', '')}\n本阶段补充要求：{course.get('prompts', {}).get(stage, '')}"
 
     def event(self, stage, status, message=""):
         self.active_stage = stage
+        for gateway in (self.text,self.vision,getattr(self,"acceptance",None)):
+            if gateway:gateway.settings["usage_stage"]=stage
         event = {"stage": stage, "status": status, "message": sanitize_error(message, self.config)}
         with (self.output / "events.jsonl").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(event, ensure_ascii=False) + "\n")
@@ -658,7 +676,7 @@ class VideoPipeline:
     def assemble_code(self, section, snippets):
         self.validate_snippets(snippets, len(section["beats"]))
         definitions = "from manim import *\nimport numpy as np\nimport math\nfrom scene_runtime import NarratedScene\n\n"
-        style = {key: self.config["video"].get(key) for key in ("theme", "orientation", "brand", "style_palette", "layout", "reset_between_beats", "exit_fade", "template_id", "style_lock")}
+        style = {key: self.config["video"].get(key) for key in ("theme", "orientation", "brand", "style_palette", "layout", "reset_between_beats", "exit_fade", "template_id", "style_lock", "subtitle_mode")}
         background = self.config["video"].get("style_palette", {}).get("background", "#F7FAF7" if style["theme"] == "light" else "#0b1020")
         definitions += f"config.background_color = {background!r}\n"
         if style.get("style_lock"):
@@ -764,6 +782,7 @@ class VideoPipeline:
                     reason = (errors[-1] if errors else detail.splitlines()[-1] if detail else "渲染器未返回错误详情")[:300]
                     title = section.get('title', section['id'])[:60]
                     raise RuntimeError(f"“{title}”动画制作失败，已自动修复 {attempt} 次。具体原因：{reason}") from failure
+                if getattr(self,"harness",None):self.harness.budget.take_revision("render",section["id"])
                 print(f"修复 {section['id']}，第 {attempt + 1} 次")
                 snippets = self.text.json(self.prompt("code", code_prompt(section, snippets, str(failure)[-8000:], self.templates, self.config["video"])), lambda value: self.validate_snippets(value, len(section["beats"])))
 
@@ -786,6 +805,56 @@ class VideoPipeline:
             return self._run(plan_only, stop_after)
 
     def _run(self, plan_only=False, stop_after="compose"):
+        from quality_harness import QualityRejected
+        while True:
+            try:
+                return self._run_once(plan_only,stop_after)
+            except QualityRejected as failure:
+                if not getattr(self,'harness',None) or self.active_stage!='acceptance':raise
+                # Only the affected render/code can change. Approved narration,
+                # outline, storyboard, proof and frozen criteria are immutable.
+                try:
+                    self.harness.budget.take_revision('final')
+                    self.repair_quality_failure(failure.report)
+                except Exception as stopped:
+                    self.manifest['status']='failed'
+                    self.event('acceptance','failed',str(stopped)[:1000])
+                    save_json(self.output/'manifest.json',self.manifest)
+                    raise
+
+    def repair_quality_failure(self, report):
+        failures=[x for x in report['checks'] if x.get('status')!='pass']
+        if any(x.get('id')=='silence' for x in failures):
+            raise ValueError('配音存在超过3.5秒的非规划静音，已保留报告并停止；需要检查配音服务，不会自动删改已确认旁白。')
+        if failures and all(x.get('id') in ('duration','streams','decode','subtitles') for x in failures):
+            self.event('compose','running','媒体完整性未通过，保留已验收镜头并重新合成')
+            (self.output/'candidate.mp4').unlink(missing_ok=True)
+            self.manifest['status']='started'
+            return
+        board=json.loads((self.output/'storyboard_assets.json').read_text())
+        timing=json.loads((self.output/'timing.json').read_text())
+        targets={x.get('section_id') for x in failures if x.get('section_id')}
+        for failure in failures:targets.update(failure.get('section_ids',[]))
+        if not targets:targets={s['id'] for s in board['sections']}
+        rendered_file=self.output/'rendered.json'
+        rendered=json.loads(rendered_file.read_text()) if rendered_file.exists() else {}
+        for section in board['sections']:
+            if section['id'] not in targets:continue
+            measured=next(s for s in timing['sections'] if s['id']==section['id'])
+            section={**section,'beats':measured['beats']}
+            previous=json.loads((self.output/f"{section['id']}_code.json").read_text())
+            self.event('code','running','按冻结验收标准修正未通过的镜头')
+            if getattr(self,'logic_proof',None):raise ValueError('确定性推理图解未通过验收，需要修复图解模板；不会让模型改写已验证证明。')
+            feedback=json.dumps({'frozen_contract':self.harness.contract,'failures':failures},ensure_ascii=False)
+            revised=self.text.json(self.prompt('code',code_prompt(section,previous,feedback,self.templates,self.config['video'])),lambda v:self.validate_snippets(v,len(section['beats'])))
+            save_json(self.output/f"{section['id']}_code.json",revised)
+            self.reseal_document(f"{section['id']}_code.json",revised,'final acceptance repair')
+            rendered.pop(section['id'],None)
+        save_json(rendered_file,rendered)
+        for name in ('reviewed.json','review_status.json'):(self.output/name).unlink(missing_ok=True)
+        self.manifest['status']='started'
+
+    def _run_once(self, plan_only=False, stop_after="compose"):
         try:
             if plan_only:
                 stop_after = "storyboard"
@@ -806,6 +875,7 @@ class VideoPipeline:
             self.planning_checkpoint("storyboard", storyboard)
             if stop_after == "storyboard":
                 return self.output / "storyboard.json"
+            if getattr(self,'harness',None):self.harness.ensure_contract(outline,storyboard)
             self.event("audio", "running", "合成旁白并测量真实时长")
             target = self.config["video"].get("target_duration")
             if target is not None and (isinstance(target, bool) or not isinstance(target, (int, float)) or not math.isfinite(target) or target <= 0):
@@ -817,6 +887,14 @@ class VideoPipeline:
                 spoken = sum(beat["duration"] for section in storyboard["sections"] for beat in section["beats"])
                 if target is None or spoken <= target + 1 / self.config["video"]["fps"]:
                     break
+                if getattr(self,'harness',None):
+                    message=f'完整旁白需 {spoken:.1f} 秒，超出目标 {target} 秒；未截断配音，也未改写已确认的内容。请精简分镜旁白后重新确认，或新建更长的视频。'
+                    if getattr(self,'planning_gate',None):
+                        from planning_review import PlanningReview
+                        review=PlanningReview(self.project);review.state['auto_approve']=False
+                        review.state['pending_stage']='storyboard';review.state['stages'].setdefault('storyboard',{}).pop('approved_version',None);review.persist()
+                        raise PlanningPending('storyboard',message)
+                    raise ValueError(message)
                 if audio_round == 2:
                     raise ValueError("Narration still exceeds target after two automatic revisions; no speech was truncated")
                 if getattr(self,'logic_proof',None):
@@ -836,14 +914,15 @@ class VideoPipeline:
                 if actual > target + 1 / self.config["video"]["fps"]:
                     raise ValueError("Real narration exceeds target duration; shorten narration or change TTS speed, never truncate speech")
                 # Spread spare time across the planned visual beats, rather than freezing the final frame.
-                slack = max(0, target - actual)
+                slack = 0 if getattr(self,'harness',None) else max(0, target - actual)
                 weights = [max(0.1, float(beat.get("duration_seconds", 1))) for beat in beats]
                 for beat, weight in zip(beats, weights):
                     beat["duration"] += math.floor(slack * weight / sum(weights) * self.config["video"]["fps"]) / self.config["video"]["fps"]
-                beats[-1]["duration"] += max(0, target - sum(beat["duration"] for beat in beats))
+                if not getattr(self,'harness',None):beats[-1]["duration"] += max(0, target - sum(beat["duration"] for beat in beats))
                 for section in storyboard["sections"]:
                     save_json(self.output / f"{section['id']}_timing.json", section)
             save_json(self.output / "timing.json", storyboard)
+            if getattr(self,'harness',None):self.harness.timeline_check(storyboard)
             self.event("audio", "complete")
             if stop_after == "audio":
                 return self.output / "timing.json"
@@ -919,15 +998,20 @@ class VideoPipeline:
                     revision = rendered[section_id]["revision"]
                     for round_number in range(self.config["vision"]["rounds"] + 1):
                         from media import sample_beat_frames
-                        frames = sample_beat_frames(video, self.output / section_id / f"review_{round_number}", section["beats"], self.config["vision"]["frames"])
-                        timestamps = json.loads((frames[0].parent / 'timestamps.json').read_text(encoding='utf8'))
-                        feedback = self.assess_visual(section,frames,timestamps)
+                        if getattr(self,'harness',None):
+                            report=self.harness.review_video(video,{'sections':[section]},'section_'+section_id)
+                            feedback={'has_issues':not report['passed'],'suggested_improvements':[x for x in report['checks'] if x['status']!='pass'],'quality_report':report}
+                        else:
+                            frames = sample_beat_frames(video, self.output / section_id / f"review_{round_number}", section["beats"], self.config["vision"]["frames"])
+                            timestamps = json.loads((frames[0].parent / 'timestamps.json').read_text(encoding='utf8'))
+                            feedback = self.assess_visual(section,frames,timestamps)
                         feedback["reviewed_revision"] = revision
                         save_json(self.output / f"{section_id}_review_{round_number}.json", feedback)
                         if not feedback["has_issues"] or round_number == self.config["vision"]["rounds"]:
                             break
                         if getattr(self, 'logic_proof', None):
                             raise ValueError('可验证图解视觉审核发现问题，成片暂不发布：'+json.dumps(feedback['suggested_improvements'],ensure_ascii=False))
+                        if getattr(self,'harness',None):self.harness.budget.take_revision("visual",section_id)
                         revised = self.text.json(self.prompt("code", code_prompt(section, snippets, json.dumps(feedback, ensure_ascii=False), self.templates, self.config["video"])), lambda value: self.validate_snippets(value, len(section["beats"])))
                         video, snippets, revision = self.render_with_repairs(section, revised, revision + 1)
                     rendered[section_id] = {"video": str(video), "revision": revision}
@@ -940,11 +1024,29 @@ class VideoPipeline:
                 summary = review_summary(self.output, rendered, True)
                 save_json(self.output / "review_status.json", summary)
                 self.manifest["visual_review"] = summary
-                self.event("review", "complete" if summary["passed"] else "unverified", "Final revision passed sampled review; dynamic acceptance still required" if summary["passed"] else "Final revision not approved or not re-reviewed after repair")
+                self.event("review", "complete" if summary["passed"] else "unverified", "章节画面审核通过，继续验收完整成片" if summary["passed"] else "章节尚未通过或修复后未复核，成片暂不交付")
             if stop_after == "review":
                 return reviewed_file
             if self.vision and self.config["vision"].get("require_pass") and not summary["passed"]:
+                if getattr(self,'harness',None):
+                    issues=[]
+                    for checked_section in storyboard['sections']:
+                        checked=self.harness.review_video(Path(rendered[checked_section['id']]['video']),{'sections':[checked_section]},'section_'+checked_section['id'])
+                        issues.extend(checked['checks'])
+                    report={'passed':False,'checks':issues,'scope':'sections'}
+                    save_json(self.harness.directory/'failure.json',report)
+                    from quality_harness import QualityRejected
+                    raise QualityRejected(report)
                 raise ValueError("Visual review still found issues; final video withheld. See review_status.json and review feedback.")
+            part_receipts=[]
+            if getattr(self,'harness',None):
+                from quality_harness import QualityRejected
+                for section in storyboard['sections']:
+                    part=self.harness.review_video(Path(rendered[section['id']]['video']),{'sections':[section]},'section_'+section['id'])
+                    if not part['passed']:
+                        save_json(self.harness.directory/'failure.json',part)
+                        raise QualityRejected(part)
+                    part_receipts.append({'section_id':section['id'],'passed':True,'media_sha256':part['media_sha256'],'report_hash':part['report_hash']})
             self.event("compose", "running", "合并动画、配音和字幕")
             all_beats, videos, audios = [], [], []
             for section in storyboard["sections"]:
@@ -960,7 +1062,7 @@ class VideoPipeline:
             concat(audios, self.output / "narration.wav", audio=True)
             duration = write_subtitles(all_beats, self.output / "subtitles.srt")
             save_json(self.output / "timeline.json", all_beats)
-            final = self.output / "final.mp4"
+            final = self.output / ("candidate.mp4" if getattr(self,'harness',None) else "final.mp4")
             video, audio = self.output / "animation.mp4", self.output / "narration.wav"
             montage_settings = self.config.get("montage", {})
             if montage_settings:
@@ -974,16 +1076,27 @@ class VideoPipeline:
                 self.event('compose', 'running', '正在合成背景音乐，自动循环并降低旁白期间的音量')
                 audio = compose_background_music(self.project, audio, self.output, duration, music)
                 self.manifest['background_music'] = music
-            mux(video, audio, self.output / "subtitles.srt", final, duration, self.config["video"].get("subtitle_language", "zho"))
+            mux(video, audio, self.output / "subtitles.srt", final, duration, self.config["video"].get("subtitle_language", "zho"), subtitle_mode=self.config["video"].get("subtitle_mode","soft"))
             details = probe(final)
-            if not {"video", "audio", "subtitle"}.issubset({stream["type"] for stream in details["streams"]}):
+            required_streams={"video","audio"}|({"subtitle"} if self.config["video"].get("subtitle_mode")!="off" else set())
+            if not getattr(self,"harness",None) and not required_streams.issubset({stream["type"] for stream in details["streams"]}):
                 raise RuntimeError("最终视频缺少视频、音频或字幕轨")
-            if abs(details["duration"] - duration) > 0.2:
+            if not getattr(self,"harness",None) and abs(details["duration"] - duration) > 0.2:
                 raise RuntimeError("最终视频时长异常")
             if getattr(self,'logic_proof',None):
                 from logic_acceptance import final_receipt
                 receipts=[json.loads(Path(rendered[s['id']]['video']).with_suffix('.receipt.json').read_text()) for s in storyboard['sections']]
                 save_json(self.output/'logic_final_acceptance.json',final_receipt(self.logic_proof,storyboard,final,details,self.logic_modules()[0],receipts))
+            if getattr(self,'harness',None):
+                from quality_harness import QualityRejected
+                self.event('acceptance','running','按冻结标准验收完整成片、全部字幕、画面连续性和静音')
+                host=self.harness.final_checks(final,storyboard,self.output/'narration.wav')
+                visual=self.harness.review_video(final,storyboard,'final') if host['passed'] else {'passed':False,'checks':[],'frame_count':0}
+                report=self.harness.report(host,visual,part_receipts)
+                self.manifest['quality_acceptance']={k:v for k,v in report.items() if k!='checks'}
+                if not report['passed']:raise QualityRejected(report)
+                destination=self.output/'final.mp4';final.replace(destination);final=destination
+                self.event('acceptance','complete','全部质量门禁通过，可以领取成片')
             self.manifest.update({"status": "complete", "media": details, "output": str(final)})
             self.event("compose", "complete")
             return final
@@ -1000,7 +1113,7 @@ class VideoPipeline:
             if self.manifest["status"] == "started":
                 self.manifest["status"] = "ready"
             self.manifest["production_model"] = getattr(self.text, "settings", self.config["text"])["model"]
-            self.manifest["usage"] = {"text": self.text.usage, "vision": self.vision.usage if self.vision else {}}
+            self.manifest["usage"] = {"text": self.text.usage, "vision": self.vision.usage if self.vision else {},"acceptance": self.acceptance.usage if getattr(self,'acceptance',None) else {}}
             save_json(self.output / "manifest.json", self.manifest)
 
     @staticmethod

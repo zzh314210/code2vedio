@@ -47,7 +47,7 @@ server.settings=copy.deepcopy(config);server.settings['vision']['api_key']='fake
 def worker(identity,project,prompt,config,materials,resume=False):
  try:
   server.update_job(identity,status='running')
-  config=copy.deepcopy(config);config['tts']={'provider':'none'};config['vision']['enabled']=False;config['teaching_research']['enabled']=False
+  config=copy.deepcopy(config);config['tts']={'provider':'none'};config['quality']={'enabled':False};config['vision']['enabled']=False;config['teaching_research']['enabled']=False
   pipe=VideoPipeline(prompt,config,project/'output',project=project,materials=materials,resume=resume,planning_gate=lambda stage,doc:PlanningReview(project).checkpoint(stage,doc))
   pipe.run(stop_after='audio')
   server.update_job(identity,status='complete',message='audio reached')

@@ -115,9 +115,10 @@ def base(proof,beat,index,t):
         size=31
         while len(wrap(s['text'],374,size,max_lines=10))>2 and size>24:size-=1
         paragraph(d,(x+24,441),s['text'],374,size,INK,max_lines=2)
-    d.rounded_rectangle((80,927,1840,1037),22,fill='#FFFFFF',outline=LINE,width=1)
-    cue=next((s['text'] for s in beat.get('subtitles',[]) if s['start']<=t<s['end']), '')
-    if cue:paragraph(d,(125,945),cue,1670,36,INK,max_lines=2)
+    if not beat.get('_hide_subtitles'):
+        d.rounded_rectangle((80,927,1840,1037),22,fill='#FFFFFF',outline=LINE,width=1)
+        cue=next((s['text'] for s in beat.get('subtitles',[]) if s['start']<=t<s['end']), '')
+        if cue:paragraph(d,(125,945),cue,1670,36,INK,max_lines=2)
     return image
 
 
@@ -216,7 +217,7 @@ def render_logic(section,proof,destination,video,progress=None):
             for index,beat in enumerate(beats):
                 duration=beat['duration'];count=round(duration*fps)
                 for n in range(count):
-                    proc.stdin.write(frame(proof,beat,index,n/fps,duration).tobytes())
+                    proc.stdin.write(frame(proof,{**beat,'_hide_subtitles':video.get('subtitle_mode') in ('burn','off')},index,n/fps,duration).tobytes())
                 receipts.append({'scene_id':beat['scene_id'],'proof_hash':proof['proof_hash'],'frames':count,'fps':fps,'duration':count/fps,'narration_sha256':digest(beat['narration'])})
                 if progress:progress(index+1,len(beats))
             proc.stdin.close()

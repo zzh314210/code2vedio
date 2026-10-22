@@ -14,7 +14,7 @@ def final_receipt(proof,storyboard,final,details,contract,render_receipts):
         if not b.get('subtitles'):raise ValueError('此图解需要逐句字幕时序，配音未提供可用字幕')
     duration=sum(b['duration'] for b in beats)
     if abs(details['duration']-duration)>.2:raise ValueError('成片时长与证明场景不一致')
-    if not {'video','audio','subtitle'}<={s['type'] for s in details['streams']}:raise ValueError('成片音视频或字幕轨缺失')
+    if not {'video','audio'}<={s['type'] for s in details['streams']}:raise ValueError('成片音视频或字幕轨缺失')
     h=hashlib.sha256()
     with Path(final).open('rb') as stream:
         for block in iter(lambda:stream.read(1024*1024),b''):h.update(block)

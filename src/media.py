@@ -63,29 +63,39 @@ def concat(files, destination, audio=False):
     run_command([ffmpeg_binary(), "-y", "-f", "concat", "-safe", "0", "-i", str(listing), *encoding, str(destination)])
 
 
-def mux(video, audio, subtitles, destination, duration, subtitle_language="zho"):
+def mux(video, audio, subtitles, destination, duration, subtitle_language="zho", subtitle_mode="soft"):
     with av.open(str(video)) as container:
         stream = next(s for s in container.streams if s.type == "video")
         frame_rate = float(stream.base_rate or stream.average_rate)
+        if subtitle_mode=='burn':width,height=stream.width,stream.height
     if not math.isfinite(frame_rate) or frame_rate <= 0:
         raise ValueError("Invalid final video frame rate")
     frame_count = max(1, round(duration * frame_rate))
+    if subtitle_mode not in ('soft','burn','off'):raise ValueError('字幕模式无效')
+    filters=f"fps={frame_rate},tpad=stop_mode=clone:stop_duration=1"
+    if subtitle_mode=='burn':
+        from subtitle_render import write_ass,filter_path
+        ass=Path(destination).parent/'captions.ass';write_ass(subtitles,ass,width,height)
+        filters+=",ass=filename='"+filter_path(ass)+"'"
+    subtitle_input=[] if subtitle_mode=='off' else ['-i',str(subtitles)]
+    subtitle_map=[] if subtitle_mode=='off' else ['-map','2:0','-c:s','mov_text','-metadata:s:s:0',f'language={subtitle_language}']
     run_command([
-        ffmpeg_binary(), "-y", "-i", str(video), "-i", str(audio), "-i", str(subtitles),
-        "-map", "0:v:0", "-map", "1:a:0", "-map", "2:0",
-        "-vf", f"fps={frame_rate},tpad=stop_mode=clone:stop_duration=1", "-frames:v", str(frame_count),
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+        ffmpeg_binary(), "-y", '-threads','2', "-i", str(video), "-i", str(audio), *subtitle_input,
+        "-map", "0:v:0", "-map", "1:a:0", *subtitle_map,
+        "-vf", filters, "-frames:v", str(frame_count),
+        "-c:v", "libx264", '-threads','2', "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",
         "-af", "loudnorm=I=-16:TP=-1.5:LRA=9", "-ar", "48000",
-        "-c:s", "mov_text", "-metadata:s:s:0", f"language={subtitle_language}", "-t", str(duration), "-movflags", "+faststart", str(destination),
+        "-t", str(duration), "-movflags", "+faststart", str(destination),
     ])
+
 
 
 def sample_frames(video, directory, count=6, positions=None):
     directory.mkdir(parents=True, exist_ok=True)
     duration = probe(video)["duration"]
     positions = [duration * (index + 0.5) / count for index in range(count)] if positions is None else positions
-    if not 1 <= len(positions) <= 80 or any(not isinstance(t,(int,float)) or not math.isfinite(t) or not 0 <= t < duration for t in positions):
+    if not 1 <= len(positions) <= 960 or any(not isinstance(t,(int,float)) or not math.isfinite(t) or not 0 <= t < duration for t in positions):
         raise ValueError('Frame positions must be finite and inside the video')
     frames = []
     for index,position in enumerate(positions):

@@ -28,7 +28,8 @@ def wait(identity):
 def worker(identity,project,prompt,config,materials,resume=False):
  try:
   server.update_job(identity,status='running')
-  config=copy.deepcopy(config);config['tts']={'provider':'none'};config['vision']['enabled']=False
+  config=copy.deepcopy(config);config['tts']={'provider':'none'};config['quality']={'enabled':False}; # legacy compiler-only fixture
+  config['vision']['enabled']=False
   pipe=VideoPipeline(prompt,config,project/'output',project=project,materials=materials,resume=resume,planning_gate=lambda st,doc:PlanningReview(project).checkpoint(st,doc))
   pipe.run(stop_after='audio');server.update_job(identity,status='complete')
  except PlanningPending as p:server.update_job(identity,status='awaiting_review',stage=p.stage)

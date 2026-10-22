@@ -4,7 +4,7 @@ import {request} from './services';
 import './queue.css';
 
 export type QueueState={state:string;position:number;ahead:number;waiting:number;wait_minutes:[number,number]|null;remaining_minutes:[number,number];waiting_for:string;active_stage?:string;concurrency:number};
-const stageNames:Record<string,string>={outline:'整理大纲',storyboard:'编排分镜',audio:'合成配音',assets:'整理素材',code:'制作动画',render:'渲染画面',review:'检查画面',compose:'合成成片',analyze:'分析素材',planning:'编排剪辑',transcribe:'识别语音',prepare:'准备制作'};
+const stageNames:Record<string,string>={criteria:'制定验收标准',acceptance:'完整成片验收',outline:'整理大纲',storyboard:'编排分镜',audio:'合成配音',assets:'整理素材',code:'制作动画',render:'渲染画面',review:'检查画面',compose:'合成成片',analyze:'分析素材',planning:'编排剪辑',transcribe:'识别语音',prepare:'准备制作'};
 export function QueueStatus({queue,cancelPath}:{queue?:QueueState;cancelPath?:string}){
  const[busy,setBusy]=useState(false),[error,setError]=useState(''),[cancelled,setCancelled]=useState(false);
  if(!queue||queue.state!=='queued')return null;

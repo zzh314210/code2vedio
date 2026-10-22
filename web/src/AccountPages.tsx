@@ -5,7 +5,7 @@ import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
 import {request,jsonRequest,date,type User} from './services';
 
-export type Config={use_platform?:boolean;saved?:boolean;platform_text_model?:string;platform_vision_model?:string;text:Channel;vision:Channel;vision_inherit:boolean;tts:Channel;text_ready:boolean;vision_ready:boolean;speech_ready:boolean};
+export type Config={quality?:import("./QualitySettings").QualityPolicy;subtitles_enabled?:boolean;acceptance?:Channel;acceptance_inherit?:boolean;platform_acceptance_model?:string;use_platform?:boolean;saved?:boolean;platform_text_model?:string;platform_vision_model?:string;text:Channel;vision:Channel;vision_inherit:boolean;tts:Channel;text_ready:boolean;vision_ready:boolean;speech_ready:boolean};
 function Notice({error,message}:{error:string;message?:string}){return <>{error&&<p className="editor-error" role="alert">{error}</p>}{message&&<p className="success-notice" role="status"><Check size={16}/>{message}</p>}</>}
 
 export {default as WalletPage} from './WalletPage';

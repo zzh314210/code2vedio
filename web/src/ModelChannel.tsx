@@ -13,7 +13,7 @@ export type Channel = {
  fallback_models?:string[]; key_configured?:boolean; clear_key?:boolean;
  voice?:string; provider?:string;
 };
-type Role = 'text'|'vision'|'tts';
+type Role = 'text'|'vision'|'acceptance'|'tts';
 
 export default function ModelChannel({role,title,description,item,onChange}:{
  role:Role; title:string; description:string; item:Channel;
@@ -41,7 +41,7 @@ export default function ModelChannel({role,title,description,item,onChange}:{
   finally {if(!controller.signal.aborted)setLoading(false)}
  };
  const filtered=models?.filter(model=>model.toLowerCase().includes(query.trim().toLowerCase()))||[];
- const keyLabel=role==='text'?'内容生成密钥':role==='vision'?'视觉审核密钥':'配音服务密钥';
+ const keyLabel=role==='text'?'内容生成密钥':role==='vision'?'视觉审核密钥':role==='acceptance'?'验收规划密钥':'配音服务密钥';
  return <fieldset className="settings-card model-channel">
   <legend><span className="section-icon"><KeyRound size={17}/></span>{title}<span className={'pill '+(item.key_configured&&!item.clear_key?'success':'warning')}>{item.clear_key?'待移除':item.api_key?'密钥待保存':item.key_configured?'密钥已保存':'待配置'}</span></legend>
   <p>{description}</p>

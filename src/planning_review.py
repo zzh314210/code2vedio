@@ -15,9 +15,9 @@ def version_of(document):
 
 
 class PlanningPending(Exception):
-    def __init__(self, stage):
+    def __init__(self, stage, message=None):
         self.stage = stage
-        super().__init__(f"等待确认{'大纲' if stage == 'outline' else '分镜'}")
+        super().__init__(message or f"等待确认{'大纲' if stage == 'outline' else '分镜'}")
 
 
 class ReviewConflict(ValueError):
@@ -78,6 +78,9 @@ class PlanningReview:
             self.state["stages"].pop(affected, None)
             if affected != stage:
                 self.path(affected).unlink(missing_ok=True)
+        # Invalidate current quality pointers, preserving immutable contracts and budgets.
+        for name in ('contract','timeline','failure','acceptance'):
+            (self.project/'output/quality'/(name+'.json')).unlink(missing_ok=True)
         self.state["pending_stage"] = stage
         self.state["history"].append({"stage": stage, "version": version_of(document), "author": author, "at": time.time()})
         self.persist()

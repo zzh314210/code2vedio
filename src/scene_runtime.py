@@ -158,7 +158,9 @@ class NarratedScene(Scene):
         plate = RoundedRectangle(width=width, height=0.94, corner_radius=0.18, stroke_width=0, fill_color=(self.lesson_style.get("style_palette") or {}).get("panel", "#FFFFFF" if light else "#172034"), fill_opacity=0.97)
         plate.move_to([0, caption_y, 0])
         self._chrome = VGroup(brand, title, rail, progress, plate)
-        cues = beat.get("subtitles") or [{"start": 0, "end": beat["duration"], "text": beat["caption"]}]
+        if self.lesson_style.get("subtitle_mode") in ("burn","off"):
+            self._chrome.remove(plate)
+        cues = [] if self.lesson_style.get("subtitle_mode") in ("burn","off") else beat.get("subtitles") or [{"start": 0, "end": beat["duration"], "text": beat["caption"]}]
         for cue in cues:
             # Wrap by rendered glyph width, preserving number tokens and CJK punctuation.
             # Fixed character counts could split a value such as "12" across two lines.

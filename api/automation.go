@@ -97,6 +97,7 @@ func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 func (s *Store) taskConfig(uid, job string) (PersonalConfig, error) {
 	var b []byte
 	c := defaultConfig()
+	c.Quality = nil // Legacy frozen tasks did not opt into the new monetary cap.
 	err := s.DB.QueryRow("SELECT ciphertext FROM task_configs WHERE job_id=? AND user_id=?", job, uid).Scan(&b)
 	if err != nil {
 		return c, err

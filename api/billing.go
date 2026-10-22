@@ -140,6 +140,11 @@ func (b *Billing) authorize(d meterRequest) (map[string]any, error) {
 		if cfg.VisionInherit {
 			ch = cfg.Text
 		}
+	} else if d.Role == "acceptance" {
+		ch = cfg.Acceptance
+		if cfg.AcceptanceInherit == nil || *cfg.AcceptanceInherit {
+			ch = cfg.Text
+		}
 	} else if d.Role != "text" {
 		return nil, errors.New("该调用类型不可计费。")
 	}
@@ -223,6 +228,15 @@ func (b *Billing) authorize(d meterRequest) (map[string]any, error) {
 	}
 	if err = tx.QueryRow("SELECT COALESCE(sum(reserved_cents),0) FROM billing_calls WHERE user_id=? AND status IN ('reserved','unmetered')", d.UserID).Scan(&held); err != nil {
 		return nil, err
+	}
+	if cfg.Quality != nil && cfg.Quality.MaxCostCents > 0 {
+		var jobUsed int64
+		if err = tx.QueryRow("SELECT COALESCE(sum(CASE WHEN status IN ('reserved','unmetered') THEN reserved_cents*10000 ELSE cost_micro END),0) FROM billing_calls WHERE user_id=? AND job_id=?", d.UserID, d.JobID).Scan(&jobUsed); err != nil {
+			return nil, err
+		}
+		if jobUsed+reserved*10000 > int64(cfg.Quality.MaxCostCents)*10000 {
+			return nil, errors.New("已达到本任务设置的平台模型费用上限，已停止调用并保留进度。单次预占也计入上限。")
+		}
 	}
 	if balance-held < reserved {
 		return nil, errors.New("可用余额不足以覆盖本次模型调用上限，请充值后继续。")
@@ -442,21 +456,30 @@ func (s *Server) billingInfo(w http.ResponseWriter, r *http.Request) {
 	if id := r.URL.Query().Get("vision_model"); id != "" {
 		c.PlatformVision = id
 	}
+	if id := r.URL.Query().Get("acceptance_model"); id != "" {
+		c.PlatformAcceptance = id
+	}
+	if raw := r.URL.Query().Get("quality"); raw != "" {
+		q := defaultQuality()
+		if len(raw) > 2000 || json.Unmarshal([]byte(raw), q) != nil || validateQuality(q) != nil {
+			fail(w, 422, "质量与次数配置无效。")
+			return
+		}
+		c.Quality = q
+	}
 	effective, e := s.effective(c)
 	low, high := int64(0), int64(0)
+	estimatedCalls := 0
 	duration, _ := strconv.Atoi(r.URL.Query().Get("duration"))
 	if duration <= 0 {
 		duration = 60
 	}
 	duration = min(duration, 600)
-	if e == nil && len(effective.PlatformPrices) == 2 {
-		scenes := int64(max(2, duration/15))
-		t, _ := tokenCost(effective.PlatformPrices[0], 20000+scenes*6000, 5000+scenes*4500, 0)
-		v, _ := tokenCost(effective.PlatformPrices[1], scenes*12000, scenes*1000, 0)
-		low = ceil(t+v, 10000)
-		high = low * 3
+	if e == nil {
+		low, high, estimatedCalls = qualityEstimate(effective, duration)
 	}
-	reply(w, 200, map[string]any{"platform_available": s.platformAvailable(catalog), "enabled": s.Billing.Enabled, "charge_byok": false, "held_cents": held, "balance_cents": u.Balance, "available_cents": max(0, u.Balance-held), "prepaid": prepaid, "minimum_deposit_cents": 500, "currency": "CNY", "catalog": catalog.public(false), "estimate_low_cents": low, "estimate_high_cents": high, "service_fee_cents": 0})
+
+	reply(w, 200, map[string]any{"platform_available": s.platformAvailable(catalog), "enabled": s.Billing.Enabled, "charge_byok": false, "held_cents": held, "balance_cents": u.Balance, "available_cents": max(0, u.Balance-held), "prepaid": prepaid, "minimum_deposit_cents": 500, "currency": "CNY", "catalog": catalog.public(false), "estimate_low_cents": low, "estimate_high_cents": high, "service_fee_cents": 0, "estimated_base_calls": estimatedCalls, "quality": c.Quality})
 }
 
 func (s *Store) platform() (PersonalConfig, error) {
@@ -561,6 +584,20 @@ func (s *Server) effective(c PersonalConfig) (PersonalConfig, error) {
 		text.Price.Revision = catalog.Revision
 		vision.Price.Revision = catalog.Revision
 		c.PlatformPrices = []Rate{text.Price, vision.Price}
+		acceptance := text
+		if c.PlatformAcceptance != "" {
+			acceptance, e = catalog.model(c.PlatformAcceptance, "text")
+			if e != nil {
+				return c, e
+			}
+		}
+		c.Acceptance = acceptance.Channel
+		inherit := false
+		c.AcceptanceInherit = &inherit
+		c.PlatformAcceptance = acceptance.ID
+		acceptance.Price.Role = "acceptance"
+		acceptance.Price.Revision = catalog.Revision
+		c.PlatformPrices = append(c.PlatformPrices, acceptance.Price)
 		return c, nil
 	}
 	platform, err := s.Store.platform()

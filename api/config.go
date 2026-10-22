@@ -26,23 +26,28 @@ type Channel struct {
 	Voice           string         `json:"voice,omitempty"`
 }
 type PersonalConfig struct {
-	Saved          bool    `json:"saved"`
-	PlatformText   string  `json:"platform_text_model,omitempty"`
-	PlatformVision string  `json:"platform_vision_model,omitempty"`
-	PlatformPrices []Rate  `json:"platform_prices,omitempty"`
-	UsePlatform    bool    `json:"use_platform"`
-	Text           Channel `json:"text"`
-	Vision         Channel `json:"vision"`
-	TTS            Channel `json:"tts"`
-	VisionInherit  bool    `json:"vision_inherit"`
-	TextReady      bool    `json:"text_ready"`
-	VisionReady    bool    `json:"vision_ready"`
-	SpeechReady    bool    `json:"speech_ready"`
+	Quality            *QualityPolicy `json:"quality,omitempty"`
+	Subtitles          *bool          `json:"subtitles_enabled,omitempty"`
+	Acceptance         Channel        `json:"acceptance"`
+	AcceptanceInherit  *bool          `json:"acceptance_inherit,omitempty"`
+	PlatformAcceptance string         `json:"platform_acceptance_model,omitempty"`
+	Saved              bool           `json:"saved"`
+	PlatformText       string         `json:"platform_text_model,omitempty"`
+	PlatformVision     string         `json:"platform_vision_model,omitempty"`
+	PlatformPrices     []Rate         `json:"platform_prices,omitempty"`
+	UsePlatform        bool           `json:"use_platform"`
+	Text               Channel        `json:"text"`
+	Vision             Channel        `json:"vision"`
+	TTS                Channel        `json:"tts"`
+	VisionInherit      bool           `json:"vision_inherit"`
+	TextReady          bool           `json:"text_ready"`
+	VisionReady        bool           `json:"vision_ready"`
+	SpeechReady        bool           `json:"speech_ready"`
 }
 
 func defaultConfig() PersonalConfig {
-	enabled := true
-	return PersonalConfig{Text: Channel{Provider: "compatible", Thinking: &enabled, ReasoningEffort: "max", Stream: true, MaxTokens: 24000, Protocol: "chat_completions", Fallbacks: []string{}}, Vision: Channel{Provider: "compatible", Thinking: &enabled, ReasoningEffort: "max", Stream: true, MaxTokens: 24000, Protocol: "chat_completions", Fallbacks: []string{}}, VisionInherit: false, TTS: Channel{Provider: "edge", Voice: "zh-CN-XiaoxiaoNeural", Fallbacks: []string{}}}
+	enabled := func() *bool { v := true; return &v }
+	return PersonalConfig{Quality: defaultQuality(), Subtitles: enabled(), AcceptanceInherit: enabled(), Acceptance: Channel{Provider: "compatible", Thinking: enabled(), ReasoningEffort: "max", Stream: true, MaxTokens: 24000, Protocol: "chat_completions", Fallbacks: []string{}}, Text: Channel{Provider: "compatible", Thinking: enabled(), ReasoningEffort: "max", Stream: true, MaxTokens: 24000, Protocol: "chat_completions", Fallbacks: []string{}}, Vision: Channel{Provider: "compatible", Thinking: enabled(), ReasoningEffort: "max", Stream: true, MaxTokens: 24000, Protocol: "chat_completions", Fallbacks: []string{}}, VisionInherit: false, TTS: Channel{Provider: "edge", Voice: "zh-CN-XiaoxiaoNeural", Fallbacks: []string{}}}
 }
 func (c PersonalConfig) public() PersonalConfig {
 	c.PlatformPrices = nil
@@ -53,7 +58,7 @@ func (c PersonalConfig) public() PersonalConfig {
 		c.VisionReady = c.TextReady
 	}
 	c.SpeechReady = c.TTS.Provider == "edge" || (ready(c.TTS) && c.TTS.Voice != "")
-	for _, ch := range []*Channel{&c.Text, &c.Vision, &c.TTS} {
+	for _, ch := range []*Channel{&c.Text, &c.Vision, &c.Acceptance, &c.TTS} {
 		ch.KeyConfigured = ch.APIKey != ""
 		ch.APIKey = ""
 		ch.ClearKey = false
@@ -91,7 +96,24 @@ func validateEndpoint(raw string) error {
 	return nil
 }
 func normalizeConfig(c *PersonalConfig, old PersonalConfig) error {
-	for i, ch := range []*Channel{&c.Text, &c.Vision, &c.TTS} {
+	if c.Quality == nil {
+		c.Quality = defaultQuality()
+	}
+	if err := validateQuality(c.Quality); err != nil {
+		return err
+	}
+	if c.AcceptanceInherit == nil {
+		v := true
+		c.AcceptanceInherit = &v
+	}
+	if c.Acceptance.Protocol == "" {
+		c.Acceptance = defaultConfig().Acceptance
+	}
+	if c.Subtitles == nil {
+		v := true
+		c.Subtitles = &v
+	}
+	for i, ch := range []*Channel{&c.Text, &c.Vision, &c.Acceptance, &c.TTS} {
 		if ch.MaxTokens < 0 || ch.MaxTokens > 100000 {
 			return errors.New("最大输出需在1至100000 token范围内。")
 		}
@@ -100,7 +122,7 @@ func normalizeConfig(c *PersonalConfig, old PersonalConfig) error {
 				return errors.New("不支持的扩展模型参数。")
 			}
 		}
-		if i < 2 {
+		if i < 3 {
 			if ch.MaxTokens == 0 {
 				ch.MaxTokens = 24000
 			}
@@ -121,7 +143,7 @@ func normalizeConfig(c *PersonalConfig, old PersonalConfig) error {
 				ch.Thinking = &enabled
 			}
 		}
-		previous := []Channel{old.Text, old.Vision, old.TTS}[i]
+		previous := []Channel{old.Text, old.Vision, old.Acceptance, old.TTS}[i]
 		ch.BaseURL = strings.TrimRight(strings.TrimSpace(ch.BaseURL), "/")
 		ch.Model = strings.TrimSpace(ch.Model)
 		ch.APIKey = strings.TrimSpace(ch.APIKey)
@@ -143,7 +165,7 @@ func normalizeConfig(c *PersonalConfig, old PersonalConfig) error {
 		}
 		ch.ClearKey = false
 		ch.KeyConfigured = false
-		if i < 2 {
+		if i < 3 {
 			if ch.Protocol != "responses" && ch.Protocol != "chat_completions" && !(ch.Protocol == "anthropic" && ch.Provider == "anthropic") {
 				return errors.New("请选择支持的接口协议。")
 			}

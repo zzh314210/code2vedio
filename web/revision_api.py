@@ -216,9 +216,11 @@ class RevisionAPI:
         env = self.env;gateway = None;pipe = None
         env['update_job'](identity, status='revising', stage='storyboard', message='AI 正在按要求调整分镜')
         try:
-            for role in ('text', 'vision'):
+            for role in ('text', 'vision', 'acceptance'):
+                if role not in runtime:continue
                 validate_public_endpoint(runtime[role]['base_url'])
-            for role in ('text', 'vision', 'tts'):
+            for role in ('text', 'vision', 'acceptance', 'tts'):
+                if role not in runtime:continue
                 runtime[role]['usage_file'] = str(project / 'usage.jsonl')
                 runtime[role]['billing_context'] = {'private': str(env['PRIVATE']), 'user_id': parent['owner_id'], 'job_id': identity}
             with project_lock(source):
@@ -239,6 +241,11 @@ class RevisionAPI:
                 checker.validate_storyboard(value['storyboard'], value['outline'])
 
             gateway = ModelGateway(runtime['text'])
+            if runtime.get('quality',{}).get('enabled'):
+                from quality_harness import QualityBudget
+                gateway.budget=QualityBudget(project/'output/quality',runtime['quality'])
+                if getattr(gateway,'client',None):gateway.client.max_retries=0
+            gateway.settings['usage_stage']='storyboard'
             prompt = checker.prompt('storyboard', '你是成片修改编辑。以用户已有成片的大纲和分镜为基础，精确执行修改要求；未涉及的内容尽量保留。不能忽略原片从头编造。'
                                     '可以改旁白、画面、章节结构和节奏。保持事实、题目条件与素材来源准确；不加入未经提供的产品功效或价格。'
                                     '不要返回音频路径、代码、素材路径、subtitles或旧渲染时间缓存。duration_seconds只是各镜头时长权重；放慢某段可压缩口语、增加演示停顿。'
@@ -288,6 +295,6 @@ class RevisionAPI:
         except Exception as error:
             env['update_job'](identity, status='failed', message='修改未完成，原片已保留：' + sanitize_error(str(error), runtime)[:700])
         finally:
-            for client in [gateway, getattr(pipe, 'text', None), getattr(pipe, 'vision', None)]:
+            for client in [gateway, getattr(pipe, 'text', None), getattr(pipe, 'vision', None),getattr(pipe,'acceptance',None)]:
                 if client and getattr(client, 'client', None):
                     client.client.close()

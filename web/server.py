@@ -71,6 +71,7 @@ def job_settings(record, frozen=None):
     # Retain project layout but never reuse another user's credentials or library.
     result=restore_credentials(frozen,current)
     for role in ('text','vision','tts'):result[role]=copy.deepcopy(current[role])
+    if frozen.get('quality',{}).get('enabled'):result['acceptance']=copy.deepcopy(current['acceptance'])
     for resource in ('memory','cpus','pids_limit'):
         if resource in current.get('execution',{}):result.setdefault('execution',{})[resource]=current['execution'][resource]
     result.setdefault('teaching_research',{})['library']=current['teaching_research']['library']
@@ -149,12 +150,13 @@ def update_job(identity,**values):
 def work(identity,project,prompt,config,materials,resume=False):
     update_job(identity,status='running')
     try:
-        for role in ('text','vision'):
+        for role in ('text','vision',*(['acceptance'] if config.get('quality',{}).get('enabled') else [])):
             validate_public_endpoint(config[role]['base_url'])
         if config['tts'].get('provider')=='openai':validate_public_endpoint(config['tts']['base_url'])
         def event(e):update_job(identity,stage=e['stage'],stage_status=e['status'],message=e['message'])
         gate=lambda stage,document:PlanningReview(project).checkpoint(stage,document)
-        for role in ('text','vision','tts'):
+        for role in ('text','vision','acceptance','tts'):
+            if role not in config:continue
             config[role]['usage_file']=str(project/'usage.jsonl')
             config[role]['billing_context']={'private':str(PRIVATE),'user_id':jobs[identity]['owner_id'],'job_id':identity}
         pipe=VideoPipeline(prompt,config,project/'output',project=project,materials=materials,on_event=event,resume=resume,planning_gate=gate)
@@ -164,7 +166,7 @@ def work(identity,project,prompt,config,materials,resume=False):
             run_command([ffmpeg_binary(),'-y','-ss',str(probe(result)['duration']*.55),'-i',str(result),'-frames:v','1','-vf','scale=960:-2',str(poster)])
         except Exception:
             pass
-        update_job(identity,status='complete',video=f'/api/jobs/{identity}/video',subtitles=f'/api/jobs/{identity}/subtitles',poster=f'/api/jobs/{identity}/poster' if poster.is_file() else None,review=pipe.manifest.get('visual_review',{}),model=pipe.manifest.get('production_model'))
+        update_job(identity,status='complete',video=f'/api/jobs/{identity}/video',subtitles=f'/api/jobs/{identity}/subtitles' if config['video'].get('subtitle_mode')!='off' else None,poster=f'/api/jobs/{identity}/poster' if poster.is_file() else None,review=pipe.manifest.get('visual_review',{}),model=pipe.manifest.get('production_model'))
     except PlanningPending as pending:
         update_job(identity,status='awaiting_review',stage=pending.stage,message=str(pending))
     except Exception as e:
@@ -236,7 +238,7 @@ async def create_job(prompt:Annotated[str,Form()],style:Annotated[str,Form()],du
         raise HTTPException(422,'已移除公开资料搜索和外部链接读取，请直接上传参考文件。')
     personal=user_settings()
     if not visible_config(current_config.get())['speech_ready']:raise HTTPException(400,'请完善配音服务配置。')
-    if not all(personal[role].get(key) for role in ('text','vision') for key in ('api_key','model','base_url')):raise HTTPException(400,'请先配置生成与视觉审核 API Key。')
+    if not all(personal[role].get(key) for role in ('text','vision','acceptance') for key in ('api_key','model','base_url')):raise HTTPException(400,'请完善内容生成、视觉审核和验收规划服务的地址、模型与密钥。')
     if len(files or [])>10:raise HTTPException(400,'每次最多10份素材。')
     music,music_source=music_service.select(bgm_enabled,bgm_track_id,bgm_upload_id,bgm_volume)
     with lock:
@@ -353,6 +355,11 @@ def video(identity:str):
     if not record or record.get('status')!='complete':raise HTTPException(404,'视频尚未就绪。')
     target=(ROOT/record['path']).resolve() if record.get('path') else Path(record['project'])/'output/final.mp4'
     if not target.is_relative_to(ROOT) or not target.is_file():raise HTTPException(404,'视频文件不存在。')
+    if record.get('project'):
+        try:
+            from quality_harness import verify_release
+            verify_release(Path(record['project'])/'output',target)
+        except (ValueError,OSError,KeyError,TypeError):raise HTTPException(409,'成片尚未通过当前版本的全部质量验收，暂不能下载。')
     return FileResponse(target,media_type='video/mp4',filename=f"{record['style']}-{identity}.mp4")
 
 @app.get('/api/jobs/{identity}/subtitles')
@@ -360,6 +367,8 @@ def subtitles(identity:str):
     record=jobs.get(identity)
     if not record or not record.get('project'):raise HTTPException(404,'字幕尚未就绪。')
     target=Path(record['project'])/'output/subtitles.srt'
+    manifest=target.parent/'manifest.json'
+    if record.get('status')!='complete' or (manifest.is_file() and json.loads(manifest.read_text()).get('config',{}).get('video',{}).get('subtitle_mode')=='off'):raise HTTPException(404,'此作品未启用可见字幕。')
     if not target.is_file():raise HTTPException(404,'字幕尚未就绪。')
     import re
     content=re.sub(r'(\d{2}:\d{2}:\d{2}),(\d{3})',r'\1.\2',target.read_text(encoding='utf8'))
@@ -406,7 +415,14 @@ def report(identity:str):
         p=Path(record['project'])/'output/manifest.json'
         if p.is_file():
             manifest=json.loads(p.read_text(encoding='utf8'))
-            return {key:public_config(manifest[key]) for key in ('visual_review','production_model','status','stages') if key in manifest}
+            result={key:public_config(manifest[key]) for key in ('visual_review','production_model','status','stages','quality_acceptance') if key in manifest}
+            folder=p.parent/'quality';quality={}
+            for name in ('contract','budget','timeline','failure','acceptance'):
+                f=folder/(name+'.json')
+                if f.is_file():quality[name]=json.loads(f.read_text())
+            result['quality_enabled']=bool(manifest.get('config',{}).get('quality',{}).get('enabled'))
+            result['quality']=quality
+            return result
     return {'visual_review':record.get('review',{})}
 
 
@@ -540,6 +556,11 @@ def revise_worker(identity,project,record,stage,edit,runtime):
             if stage=='storyboard':prompt+='\n已确认的大纲：'+json.dumps(PlanningReview(project).document('outline'),ensure_ascii=False)
             from pipeline import ModelGateway
             gateway=ModelGateway(pipe.config['text'])
+            if runtime.get('quality',{}).get('enabled'):
+                from quality_harness import QualityBudget
+                gateway.budget=QualityBudget(project/'output/quality',runtime['quality'])
+                if getattr(gateway,'client',None):gateway.client.max_retries=0
+            gateway.settings['usage_stage']=stage
             try:
                 revised=gateway.json(prompt,lambda value:validate_document(pipe,stage,value))
             finally:

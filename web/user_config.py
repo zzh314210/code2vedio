@@ -31,7 +31,22 @@ class SpeechConfig(BaseModel):
     voice: str = Field(default='zh-CN-XiaoxiaoNeural', min_length=1, max_length=100)
 
 
+class QualityConfig(BaseModel):
+    max_cost_cents: int = Field(default=1000,ge=0,le=100000)
+    planning_revisions: int = Field(default=2, ge=0, le=5)
+    code_revisions: int = Field(default=2, ge=0, le=5)
+    render_revisions: int = Field(default=2, ge=0, le=5)
+    visual_revisions: int = Field(default=1, ge=0, le=5)
+    final_revisions: int = Field(default=1, ge=0, le=5)
+    max_model_calls: int = Field(default=60, ge=1, le=120)
+    sample_seconds: float = Field(default=2, ge=.5, le=3)
+
+
 class PersonalConfig(BaseModel):
+    quality: QualityConfig = Field(default_factory=QualityConfig)
+    subtitles_enabled: bool = True
+    acceptance: ModelConfig = Field(default_factory=ModelConfig)
+    acceptance_inherit: bool = True
     text: ModelConfig = Field(default_factory=ModelConfig)
     vision: ModelConfig = Field(default_factory=ModelConfig)
     vision_inherit: bool = False
@@ -51,7 +66,7 @@ def validate_public_endpoint(url):
 
 def saved_config(data, previous):
     value = data.model_dump()
-    for role in ('text', 'vision', 'tts'):
+    for role in ('text', 'vision', 'acceptance', 'tts'):
         item = value[role]
         item['base_url'] = item['base_url'].strip().rstrip('/')
         item['model'] = item['model'].strip()
@@ -71,8 +86,9 @@ def saved_config(data, previous):
 
 
 def visible_config(value):
-    result = copy.deepcopy(value or PersonalConfig().model_dump())
-    for role in ('text', 'vision', 'tts'):
+    value = value or {}
+    result = {**PersonalConfig().model_dump(), **copy.deepcopy(value)}
+    for role in ('text', 'vision', 'acceptance', 'tts'):
         item = result[role]
         item['key_configured'] = bool(item.pop('api_key', ''))
         item.pop('clear_key', None)
@@ -86,8 +102,8 @@ def visible_config(value):
 def runtime_config(base, personal, library):
     result = copy.deepcopy(base)
     # Only infrastructure/video settings come from the deployment; model channels are personal.
-    for role in ('text', 'vision', 'tts'):
-        result[role] = copy.deepcopy(DEFAULTS[role])
+    for role in ('text', 'vision', 'acceptance', 'tts'):
+        result[role] = copy.deepcopy(DEFAULTS['text' if role=='acceptance' else role])
     text = personal.get('text', {})
     result['text'].update(text)
     result['text']['api_key'] = text.get('api_key', '')
@@ -100,10 +116,14 @@ def runtime_config(base, personal, library):
         result['vision'] = {**copy.deepcopy(result['text']), **personal.get('vision', {}), 'api_key': personal.get('vision', {}).get('api_key', '')}
     result['vision']['public_endpoint_only'] = True
     result['vision'].update(enabled=True, inherit_text=False, frames=12, rounds=2, require_pass=True)
+    result['acceptance'] = copy.deepcopy(result['text']) if personal.get('acceptance_inherit',True) else {**copy.deepcopy(result['text']),**personal.get('acceptance',{}),'api_key':personal.get('acceptance',{}).get('api_key','')}
+    result['acceptance']['public_endpoint_only']=True
+    result['quality']={'enabled':True,**QualityConfig.model_validate(personal.get('quality') or {}).model_dump()}
+    result.setdefault('video',{})['subtitle_mode']='burn' if personal.get('subtitles_enabled',True) else 'off'
     result['tts'].update(personal.get('tts', {}))
     result['tts']['public_endpoint_only'] = True
     # This switch comes only from the signed task configuration, never a channel.
-    for role in ('text', 'vision', 'tts'):
+    for role in ('text', 'vision', 'acceptance', 'tts'):
         result[role]['platform_billing'] = personal.get('use_platform') is True and role != 'tts'
     result['teaching_research'] = {**result.get('teaching_research', {}), 'library': str(library), 'source_ids': [], 'reference_urls': []}
     return result

@@ -41,8 +41,11 @@ func TestPlatformSelectionSecretsAndPersonalPersistence(t *testing.T) {
 		t.Fatal("platform endpoint or key exposed")
 	}
 	frozen, err := s.effective(config)
-	if err != nil || frozen.Text.Model != "generation" || len(frozen.PlatformPrices) != 2 {
+	if err != nil || frozen.Text.Model != "generation" || len(frozen.PlatformPrices) != 3 {
 		t.Fatal(frozen, err)
+	}
+	if frozen.Acceptance.Model != frozen.Text.Model || frozen.Acceptance.APIKey != frozen.Text.APIKey || frozen.PlatformPrices[2].Role != "acceptance" || frozen.PlatformPrices[2].Output != frozen.PlatformPrices[0].Output {
+		t.Fatal("acceptance model/price not frozen independently")
 	}
 	config.PlatformText = "arbitrary-billable-model"
 	if _, err = s.effective(config); err == nil {

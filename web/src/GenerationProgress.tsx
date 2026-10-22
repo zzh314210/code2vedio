@@ -2,10 +2,10 @@ import {QueueStatus,type QueueState} from './QueueStatus';
 import {Check,Clock3,LoaderCircle,PauseCircle} from 'lucide-react';
 import {Progress} from '@/components/ui/progress';
 export type ProgressJob={id:string;duration:number;status:string;stage:string;stage_status?:string;auto_approve?:boolean;stage_started_at?:number;created_at?:number;queue?:QueueState};
-const stages=[['outline','整理大纲'],['storyboard','编排分镜'],['audio','合成配音'],['assets','整理素材'],['code','制作动画'],['render','渲染画面'],['review','检查画面'],['compose','合成成片']];
+const stages=[['outline','整理大纲'],['storyboard','编排分镜'],['criteria','制定标准'],['audio','合成配音'],['assets','整理素材'],['code','制作动画'],['render','渲染画面'],['review','检查画面'],['compose','合成成片'],['acceptance','成片验收']];
 // Coarse budgets, not a promised delivery time. Rendering/revision dominates.
-const weights=[.09,.13,.08,.02,.24,.24,.16,.04];
-export function estimateMinutes(duration:number){return duration<=45?[6,15]:duration<=90?[12,30]:duration<=120?[18,40]:duration<=180?[25,55]:[40,90]}
+const weights=[.06,.09,.06,.06,.01,.19,.20,.13,.05,.15];
+export function estimateMinutes(duration:number){return duration<=45?[12,35]:duration<=90?[20,55]:duration<=120?[30,75]:duration<=180?[40,100]:[60,140]}
 export default function GenerationProgress({job,compact=false}:{job:ProgressJob;compact?:boolean}){
  const index=stages.findIndex(([id])=>id===job.stage),known=index>=0,i=Math.max(0,index);
  const paused=job.status==='awaiting_review',queued=job.status==='queued',failed=job.status==='failed',complete=job.status==='complete';

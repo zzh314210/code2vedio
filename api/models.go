@@ -67,8 +67,8 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &d) {
 		return
 	}
-	if d.Role != "text" && d.Role != "vision" && d.Role != "tts" {
-		fail(w, 422, "请选择内容生成、视觉审核或配音服务。")
+	if d.Role != "text" && d.Role != "vision" && d.Role != "acceptance" && d.Role != "tts" {
+		fail(w, 422, "请选择内容生成、验收规划、视觉审核或配音服务。")
 		return
 	}
 	d.BaseURL = strings.TrimRight(strings.TrimSpace(d.BaseURL), "/")
@@ -89,6 +89,9 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 	saved := config.Text
 	if d.Role == "vision" {
 		saved = config.Vision
+	}
+	if d.Role == "acceptance" {
+		saved = config.Acceptance
 	}
 	if d.Role == "tts" {
 		saved = config.TTS

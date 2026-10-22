@@ -91,6 +91,7 @@ class ModelGateway:
             except BillingError:
                 raise
             except Exception as failure:
+                if getattr(failure,'stop_retry',False):raise
                 if not self.usage_recorded:
                     record_usage(self.settings,self.role,attempt_id=self.attempt_id,extra={'error_type':type(failure).__name__,'rejected':getattr(failure,'status_code',None) in (400,401,403,404,405,413,422,429),'duration_ms':int((time.monotonic()-self.started_at)*1000)})
                 # Keep archived quota-only policies compatible; new fallback_models
@@ -119,6 +120,8 @@ class ModelGateway:
         if self.on_request:
             stage=self.on_request(self.role, prompt, images or [])
             if stage:self.settings["usage_stage"]=stage
+        if getattr(self,'budget',None):
+            self.budget.take_call(self.role,self.settings.get('usage_stage','prepare'),self.settings['model'])
         billing_call(self.settings,'authorize',{'id':self.attempt_id,'model':self.settings['model'],'role':self.role,'max_output':int(max_tokens or self.settings.get('max_tokens',12000)),'input_bound':0 if images else len(prompt.encode('utf-8'))+1024,'stream':bool(self.settings.get('stream',False)),'stage':self.settings.get('usage_stage',''),'reasoning_policy':policy})
         if self.settings.get('reasoning_audit_file'):
             path = Path(self.settings['reasoning_audit_file'])
@@ -232,7 +235,10 @@ class ModelGateway:
             self.usage[key] += value
         return text.strip(), current
 
-    def json(self, prompt, validator=None, attempts=3, images=None):
+    def json(self, prompt, validator=None, attempts=None, images=None):
+        stage=self.settings.get("usage_stage", "prepare")
+        group="planning" if stage in ("outline","storyboard","criteria") or self.role=="acceptance" else "code" if self.role=="text" and stage in ("code","render","review","acceptance") else "visual"
+        if attempts is None:attempts=(self.budget.policy[group+"_revisions"]+1) if getattr(self,"budget",None) else 3
         error = ""
         previous = ""
         value = None
@@ -249,6 +255,7 @@ class ModelGateway:
                     validator(value)
                 return value
             except (ValueError, TypeError, KeyError, SyntaxError) as failure:
+                if attempt+1<attempts and getattr(self,"budget",None):self.budget.take_revision(group,"structured-"+self.role+"-"+stage)
                 error = str(failure)[:800]
                 validation_error = failure
                 previous = text
